@@ -1,25 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { db } from '../db'; // Dexie DB istemal karein
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Layout, Typography, Select, Button, Card, Table, message, Spin, Row, Col } from 'antd';
 import dayjs from 'dayjs';
 
 const { Content } = Layout;
 const { Title } = Typography;
 
-// --- Consistent Styles ---
-const pageStyles = {
-  padding: '12px',
-};
-
-const contentStyles = {
-  maxWidth: '1200px', // Is page ke liye thori zyada jagah
-  margin: '0 auto',
-  width: '100%',
-};
-
-const cardStyles = {
-  borderRadius: '8px',
-};
+const pageStyles = { padding: '12px' };
+const contentStyles = { maxWidth: '1200px', margin: '0 auto', width: '100%' };
+const cardStyles = { borderRadius: '8px' };
 
 const AnnualBonusPage = ({ user }) => {
   const [fiscalYears, setFiscalYears] = useState([]);
@@ -29,9 +19,12 @@ const AnnualBonusPage = ({ user }) => {
   const [agreementStartDate, setAgreementStartDate] = useState(null);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Data fetch karne ki logic bilkul wesi hi rahegi
+  // Settings ko local database se hasil karein
+  const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
+
   useEffect(() => {
     const generateFiscalYears = (startDateStr) => {
+      if (!startDateStr) return;
       const startDate = dayjs(startDateStr);
       setAgreementStartDate(startDate);
       const years = [];
@@ -49,18 +42,16 @@ const AnnualBonusPage = ({ user }) => {
       }
       setFiscalYears(years.reverse());
     };
-    const fetchStartDate = async () => {
-      const { data, error } = await supabase.from('settings').select('agreement_start_date').eq('user_id', user.id).single();
-      if (error || !data.agreement_start_date) {
-        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
+    
+    if (settings) {
+      if (settings.agreement_start_date) {
+        generateFiscalYears(settings.agreement_start_date);
       } else {
-        generateFiscalYears(data.agreement_start_date);
+        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
       }
-    };
-    fetchStartDate();
-  }, [user.id, messageApi]);
+    }
+  }, [settings, messageApi]);
 
-  // Report generate karne ki logic bilkul wesi hi rahegi
   const handleGenerateReport = async () => {
     if (!selectedYear) {
       messageApi.error('Please select a fiscal year.');
@@ -74,13 +65,20 @@ const AnnualBonusPage = ({ user }) => {
       const isFirstYear = selectedYearStartDate.isSame(agreementStartDate, 'day');
       const agreementNameToFetch = isFirstYear ? 'Current Agreement' : 'New Agreement';
       messageApi.info(`Calculating bonus using: ${agreementNameToFetch}`);
-      const { data: agreement, error: agreementError } = await supabase.from('agreements').select('*').eq('user_id', user.id).eq('agreement_name', agreementNameToFetch).single();
-      if (agreementError) throw new Error(`Could not fetch '${agreementNameToFetch}' details.`);
-      const { data: allWorkers, error: workersError } = await supabase.from('workers').select('worker_name').eq('user_id', user.id);
-      if (workersError) throw new Error('Could not fetch workers list.');
-      const { data: earnings, error: earningsError } = await supabase.from('daily_earnings').select('worker_name, earning, attendance_status').eq('user_id', user.id).gte('created_at', year.start).lte('created_at', year.end);
-      if (earningsError) throw new Error('Could not fetch earnings.');
+      
+      // Tamam data local Dexie DB se fetch karein
+      const agreement = await db.agreements.where({ user_id: user.id, agreement_name: agreementNameToFetch }).first();
+      if (!agreement) throw new Error(`Could not find '${agreementNameToFetch}' details locally. Please go online to sync.`);
+      
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+      if (allWorkers.length === 0) throw new Error('Could not find workers list locally.');
+
+      const entriesInYear = await db.daily_entries.where('[user_id+entry_date]').between([user.id, year.start], [user.id, year.end]).toArray();
+      const entryLocalIds = entriesInYear.map(e => e.local_id);
+      const earnings = await db.daily_earnings.where('entry_local_id').anyOf(entryLocalIds).toArray();
+
       const totalAnnualAllowance = (agreement.monthly_allowance || 0) * 12;
+      
       const finalData = allWorkers.map(worker => {
         const workerName = worker.worker_name;
         const annualWorkEarnings = earnings.filter(e => e.worker_name === workerName).reduce((acc, curr) => acc + curr.earning, 0);

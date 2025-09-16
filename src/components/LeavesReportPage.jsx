@@ -1,25 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { db } from '../db'; // Dexie DB istemal karein
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Layout, Typography, Select, Button, Card, Table, message, Spin, Row, Col } from 'antd';
 import dayjs from 'dayjs';
 
 const { Content } = Layout;
 const { Title } = Typography;
 
-// --- Consistent Styles ---
-const pageStyles = {
-  padding: '12px',
-};
-
-const contentStyles = {
-  maxWidth: '1000px',
-  margin: '0 auto',
-  width: '100%',
-};
-
-const cardStyles = {
-  borderRadius: '8px',
-};
+const pageStyles = { padding: '12px' };
+const contentStyles = { maxWidth: '1000px', margin: '0 auto', width: '100%' };
+const cardStyles = { borderRadius: '8px' };
 
 const LeavesReportPage = ({ user }) => {
   const [fiscalYears, setFiscalYears] = useState([]);
@@ -28,9 +18,12 @@ const LeavesReportPage = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Yeh function agreement start date se fiscal years generate karega (LOGIC MEIN KOI TABDEELI NAHI)
+  // Settings ko local database se hasil karein
+  const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
+
   useEffect(() => {
     const generateFiscalYears = (startDateStr) => {
+      if (!startDateStr) return;
       const startDate = dayjs(startDateStr);
       const years = [];
       let currentYearStart = startDate;
@@ -49,18 +42,15 @@ const LeavesReportPage = ({ user }) => {
       setFiscalYears(years.reverse());
     };
 
-    const fetchStartDate = async () => {
-      const { data, error } = await supabase.from('settings').select('agreement_start_date').eq('user_id', user.id).single();
-      if (error || !data.agreement_start_date) {
-        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
+    if (settings) {
+      if (settings.agreement_start_date) {
+        generateFiscalYears(settings.agreement_start_date);
       } else {
-        generateFiscalYears(data.agreement_start_date);
+        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
       }
-    };
-    fetchStartDate();
-  }, [user.id, messageApi]);
+    }
+  }, [settings, messageApi]);
 
-  // "Generate Report" button par click hone par (LOGIC MEIN KOI TABDEELI NAHI)
   const handleGenerateReport = async () => {
     if (!selectedYear) {
       messageApi.error('Please select a fiscal year.');
@@ -71,16 +61,39 @@ const LeavesReportPage = ({ user }) => {
 
     try {
       const year = fiscalYears.find(y => y.value === selectedYear);
-      const { data: agreement, error: agreementError } = await supabase.from('agreements').select('without_paid_leaves, paid_leaves').eq('user_id', user.id).eq('agreement_name', 'Current Agreement').single();
-      if (agreementError) throw new Error('Could not fetch agreement details.');
+      
+      // Tamam data local Dexie DB se fetch karein
+      const agreement = await db.agreements.where({ user_id: user.id, agreement_name: 'Current Agreement' }).first();
+      if (!agreement) throw new Error('Could not find agreement data locally. Please go online to sync.');
+
       const withoutPaidLimit = agreement.without_paid_leaves || 0;
       const paidLimit = agreement.paid_leaves || 0;
-      const { data: absences, error: absencesError } = await supabase.from('daily_earnings').select('worker_name').eq('user_id', user.id).eq('attendance_status', 'Absent').gte('created_at', year.start).lte('created_at', year.end);
-      if (absencesError) throw absencesError;
+
+      // Entries aur unki earnings ko local DB se hasil karein
+      const entriesInYear = await db.daily_entries
+        .where('[user_id+entry_date]')
+        .between([user.id, year.start], [user.id, year.end])
+        .toArray();
+      
+      const entryLocalIds = entriesInYear.map(e => e.local_id);
+      const absences = await db.daily_earnings
+        .where('entry_local_id').anyOf(entryLocalIds)
+        .and(earning => earning.attendance_status === 'Absent')
+        .toArray();
+
       const summary = {};
-      const { data: allWorkers } = await supabase.from('workers').select('worker_name').eq('user_id', user.id);
-      allWorkers.forEach(w => { summary[w.worker_name] = { totalAbsences: 0 }; });
-      absences.forEach(a => { if (summary[a.worker_name]) { summary[a.worker_name].totalAbsences += 1; } });
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+      
+      allWorkers.forEach(w => {
+        summary[w.worker_name] = { totalAbsences: 0 };
+      });
+      
+      absences.forEach(a => {
+        if (summary[a.worker_name]) {
+          summary[a.worker_name].totalAbsences += 1;
+        }
+      });
+
       const finalData = Object.keys(summary).map(workerName => {
         const totalAbsences = summary[workerName].totalAbsences;
         const unpaidLeavesTaken = Math.min(totalAbsences, withoutPaidLimit);
@@ -96,8 +109,11 @@ const LeavesReportPage = ({ user }) => {
           remaining_paid_leaves: remainingPaidLeaves,
         };
       });
+      
       setReportData(finalData);
-      if (finalData.length === 0) { messageApi.info('No workers found.'); }
+      if (finalData.length === 0) {
+        messageApi.info('No workers found.');
+      }
     } catch (error) {
       messageApi.error(error.message);
     } finally {

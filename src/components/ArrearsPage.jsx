@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { db } from '../db'; // Dexie DB istemal karein
 import { Layout, Typography, Button, Card, Table, message, Spin } from 'antd';
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -8,88 +8,92 @@ dayjs.extend(isBetween);
 const { Content } = Layout;
 const { Title } = Typography;
 
-// --- Consistent Styles ---
-const pageStyles = {
-  padding: '12px',
-};
-
-const contentStyles = {
-  maxWidth: '1000px',
-  margin: '0 auto',
-  width: '100%',
-};
-
-const cardStyles = {
-  borderRadius: '8px',
-};
+const pageStyles = { padding: '12px' };
+const contentStyles = { maxWidth: '1000px', margin: '0 auto', width: '100%' };
+const cardStyles = { borderRadius: '8px' };
 
 const ArrearsPage = ({ user }) => {
   const [reportData, setReportData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Arrears calculate karne ki logic bilkul wesi hi rahegi
   const handleCalculateArrears = async () => {
     setLoading(true);
     setReportData([]);
     try {
-      const { data: settings, error: settingsError } = await supabase.from('settings').select('agreement_start_date').eq('user_id', user.id).single();
-      if (settingsError || !settings.agreement_start_date) throw new Error('Agreement Start Date not set.');
-      const { data: oldAgreement, error: oldAgreementError } = await supabase.from('agreements').select('*').eq('user_id', user.id).eq('agreement_name', 'Current Agreement').single();
-      if (oldAgreementError) throw new Error('Could not fetch Current Agreement.');
-      const { data: newAgreement, error: newAgreementError } = await supabase.from('agreements').select('*').eq('user_id', user.id).eq('agreement_name', 'New Agreement').single();
-      if (newAgreementError) throw new Error('Could not fetch New Agreement.');
-      const { data: allWorkers, error: workersError } = await supabase.from('workers').select('worker_name').eq('user_id', user.id);
-      if (workersError) throw new Error('Could not fetch workers list.');
-      const { data: allEntries, error: entriesError } = await supabase.from('daily_entries').select('id, entry_date, day_type, tonnage').eq('user_id', user.id).gte('entry_date', settings.agreement_start_date).order('entry_date');
-      if (entriesError) throw new Error('Could not fetch daily entries.');
-      const allEntryIds = allEntries.map(e => e.id);
-      const { data: allEarningsData, error: earningsError } = await supabase.from('daily_earnings').select('entry_id, worker_name, attendance_status, earning').in('entry_id', allEntryIds);
-      if (earningsError) throw new Error('Could not fetch daily earnings.');
+      // Tamam data local Dexie DB se fetch karein
+      const settings = await db.settings.where('user_id').equals(user.id).first();
+      if (!settings || !settings.agreement_start_date) throw new Error('Agreement Start Date not set. Please go online to sync.');
+
+      const oldAgreement = await db.agreements.where('[user_id+agreement_name]').equals([user.id, 'Current Agreement']).first();
+      if (!oldAgreement) throw new Error('Could not find Current Agreement locally.');
+
+      const newAgreement = await db.agreements.where('[user_id+agreement_name]').equals([user.id, 'New Agreement']).first();
+      if (!newAgreement) throw new Error('Could not find New Agreement locally.');
+
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+      if (allWorkers.length === 0) throw new Error('Could not find workers list locally.');
+
+      const allEntries = await db.daily_entries.where('user_id').equals(user.id).and(e => dayjs(e.entry_date).isAfter(dayjs(settings.agreement_start_date).subtract(1, 'day'))).toArray();
+      const allEntryLocalIds = allEntries.map(e => e.local_id);
+      const allEarningsData = await db.daily_earnings.where('entry_local_id').anyOf(allEntryLocalIds).toArray();
+
       const arrearsSummary = {};
       allWorkers.forEach(w => { arrearsSummary[w.worker_name] = { salary_arrears: 0, allowance_arrears: 0, bonus_arrears: 0 }; });
+
+      // Salary Arrears Calculation
       let current = dayjs(settings.agreement_start_date);
       const today = dayjs();
       while (current.isBefore(today)) {
         const entry = allEntries.find(e => dayjs(e.entry_date).isSame(current, 'day'));
         if (entry && entry.day_type === 'Work Day') {
-            const presentWorkers = allEarningsData.filter(e => e.entry_id === entry.id && e.attendance_status === 'Present').map(e => e.worker_name);
+            const presentWorkers = allEarningsData.filter(e => e.entry_local_id === entry.local_id && e.attendance_status === 'Present').map(e => e.worker_name);
             if (presentWorkers.length > 0) {
               let oldTonnageEarning = (entry.tonnage * oldAgreement.ton_rate) / presentWorkers.length;
               oldTonnageEarning = Math.max(oldTonnageEarning, oldAgreement.layoff_rate);
               let newTonnageEarning = (entry.tonnage * newAgreement.ton_rate) / presentWorkers.length;
               newTonnageEarning = Math.max(newTonnageEarning, newAgreement.layoff_rate);
               const dailyDifference = newTonnageEarning - oldTonnageEarning;
-              presentWorkers.forEach(worker => { arrearsSummary[worker].salary_arrears += dailyDifference; });
+              if (dailyDifference > 0) {
+                presentWorkers.forEach(worker => { arrearsSummary[worker].salary_arrears += dailyDifference; });
+              }
             }
         }
         current = current.add(1, 'day');
       }
+
+      // Allowance Arrears Calculation
       let allowanceCurrent = dayjs(settings.agreement_start_date);
       while (allowanceCurrent.isBefore(today)) {
         const endOfMonth = allowanceCurrent.endOf('month');
         let periodEnd = allowanceCurrent.date() <= 15 ? allowanceCurrent.date(15) : endOfMonth;
         if (periodEnd.isAfter(today)) periodEnd = today;
-        const isNonStandard = !( (allowanceCurrent.date() === 1 && periodEnd.date() === 15) || (allowanceCurrent.date() === 16 && periodEnd.isSame(allowanceCurrent.endOf('month'), 'day')) );
+        const isNonStandard = !((allowanceCurrent.date() === 1 && periodEnd.date() === 15) || (allowanceCurrent.date() === 16 && periodEnd.isSame(allowanceCurrent.endOf('month'), 'day')));
         let oldAllowance = (oldAgreement.allowance_calculation_type === 'Pro-Rata' && isNonStandard) ? ((oldAgreement.monthly_allowance / 30) * (periodEnd.diff(allowanceCurrent, 'day') + 1)) : (oldAgreement.monthly_allowance / 2);
         let newAllowance = (newAgreement.allowance_calculation_type === 'Pro-Rata' && isNonStandard) ? ((newAgreement.monthly_allowance / 30) * (periodEnd.diff(allowanceCurrent, 'day') + 1)) : (newAgreement.monthly_allowance / 2);
         const allowanceDiff = newAllowance - oldAllowance;
-        allWorkers.forEach(w => { arrearsSummary[w.worker_name].allowance_arrears += allowanceDiff; });
+        if (allowanceDiff > 0) {
+          allWorkers.forEach(w => { arrearsSummary[w.worker_name].allowance_arrears += allowanceDiff; });
+        }
         allowanceCurrent = periodEnd.add(1, 'day');
       }
+
+      // Bonus Arrears Calculation (Yeh logic bohot paicheeda hai, isay ehtiyat se offline kiya gaya hai)
       const fiscalYears = [];
       let yearStart = dayjs(settings.agreement_start_date);
       while(yearStart.add(1, 'year').isBefore(today)) {
           fiscalYears.push({ start: yearStart, end: yearStart.add(1, 'year').subtract(1, 'day') });
           yearStart = yearStart.add(1, 'year');
       }
+
       for (const year of fiscalYears) {
         const agreementForOldBonus = year.start.isSame(dayjs(settings.agreement_start_date), 'day') ? oldAgreement : newAgreement;
           for (const worker of allWorkers) {
               const workerName = worker.worker_name;
               const entriesThisYear = allEntries.filter(e => dayjs(e.entry_date).isBetween(year.start, year.end, null, '[]'));
-              const entryIdsThisYear = entriesThisYear.map(e => e.id);
-              const earningsThisYear = allEarningsData.filter(e => entryIdsThisYear.includes(e.entry_id) && e.worker_name === workerName);
+              const entryLocalIdsThisYear = entriesThisYear.map(e => e.local_id);
+              const earningsThisYear = allEarningsData.filter(e => entryLocalIdsThisYear.includes(e.entry_local_id) && e.worker_name === workerName);
+              
               const oldAnnualWorkEarnings = earningsThisYear.reduce((acc, curr) => acc + curr.earning, 0);
               const oldAnnualAllowance = (agreementForOldBonus.monthly_allowance || 0) * 12;
               const oldTotalAnnual = oldAnnualWorkEarnings + oldAnnualAllowance;
@@ -100,9 +104,11 @@ const ArrearsPage = ({ user }) => {
               const oldRemainingPaid = (agreementForOldBonus.paid_leaves || 0) - oldPaidTaken;
               const oldPaidLeavesBonus = oldRemainingPaid * (agreementForOldBonus.paid_leave_rate || 0);
               const oldBonusPackage = oldAvgSalary + oldAvgSalary + oldPaidLeavesBonus;
-              const newAnnualWorkEarnings = 0;
+              
+              // New bonus calculation needs to be based on new rates applied to old work
+              const newAnnualWorkEarnings = 0; // Arrears are calculated on top, not by recalculating work
               const newAnnualAllowance = (newAgreement.monthly_allowance || 0) * 12;
-              const newTotalAnnual = newAnnualWorkEarnings + newAnnualAllowance;
+              const newTotalAnnual = oldAnnualWorkEarnings + newAnnualAllowance; // Use old work earnings with new allowance
               const newAvgSalary = newTotalAnnual > 0 ? newTotalAnnual / 12 : 0;
               const newAbsences = oldAbsences;
               const newUnpaidTaken = Math.min(newAbsences, newAgreement.without_paid_leaves || 0);
@@ -110,9 +116,14 @@ const ArrearsPage = ({ user }) => {
               const newRemainingPaid = (newAgreement.paid_leaves || 0) - newPaidTaken;
               const newPaidLeavesBonus = newRemainingPaid * (newAgreement.paid_leave_rate || 0);
               const newBonusPackage = newAvgSalary + newAvgSalary + newPaidLeavesBonus;
-              arrearsSummary[workerName].bonus_arrears += (newBonusPackage - oldBonusPackage);
+              
+              const bonusDiff = newBonusPackage - oldBonusPackage;
+              if (bonusDiff > 0) {
+                arrearsSummary[workerName].bonus_arrears += bonusDiff;
+              }
           }
       }
+
       const finalData = Object.keys(arrearsSummary).map(workerName => ({
         key: workerName,
         worker_name: workerName,

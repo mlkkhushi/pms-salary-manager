@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { db } from '../db'; // Supabase ke bajaye Dexie DB ko import karein
+import { useLiveQuery } from 'dexie-react-hooks'; // Live data ke liye hook
 import { Layout, Typography, Select, Button, Card, Table, message, Spin } from 'antd';
 import dayjs from 'dayjs';
+import isBetween from 'dayjs/plugin/isBetween'; // Date range ke liye plugin
+dayjs.extend(isBetween);
 
 const { Content } = Layout;
 const { Title } = Typography;
@@ -13,9 +16,11 @@ const SalaryReportPage = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
+  const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
+
   useEffect(() => {
-    // NAYI AUR MUKAMMAL LOGIC: Pay periods generate karne ke liye
     const generatePayPeriods = (startDateStr) => {
+      if (!startDateStr) return;
       const startDate = dayjs(startDateStr);
       const periods = [];
       let current = startDate;
@@ -26,60 +31,41 @@ const SalaryReportPage = ({ user }) => {
         const anniversaryDay = startDate.date();
         const dayBeforeAnniversary = anniversaryDay - 1;
 
-        // Check for anniversary month
         if (current.month() === startDate.month() && current.year() > startDate.year() && dayBeforeAnniversary > 0) {
-          // Case 1: Start of anniversary month
-          if (current.date() === 1) {
-            periodEnd = current.date(dayBeforeAnniversary);
-          }
-          // Case 2: Anniversary date itself
-          else if (current.date() === anniversaryDay) {
-            periodEnd = current.date(15);
-          }
-          // Default cases for the month
-          else if (current.date() <= 15) {
-            periodEnd = current.date(15);
-          } else {
-            periodEnd = current.endOf('month');
-          }
+          if (current.date() === 1) periodEnd = current.date(dayBeforeAnniversary);
+          else if (current.date() === anniversaryDay) periodEnd = current.date(15);
+          else if (current.date() <= 15) periodEnd = current.date(15);
+          else periodEnd = current.endOf('month');
         } else {
-           // Normal month logic
-          if (current.date() <= 15) {
-            periodEnd = current.date(15);
-          } else {
-            periodEnd = current.endOf('month');
-          }
+          if (current.date() <= 15) periodEnd = current.date(15);
+          else periodEnd = current.endOf('month');
         }
 
-        if (periodEnd.isAfter(today)) {
-          periodEnd = today;
-        }
-        
-        const isNonStandard = !( (current.date() === 1 && periodEnd.date() === 15) || (current.date() === 16 && periodEnd.isSame(current.endOf('month'), 'day')) );
+        // --- BUG FIX ---
+        // Neeche di gayi line ghalti se maujooda period ko chota kar rahi thi.
+        // Isay hata diya gaya hai.
+        // if (periodEnd.isAfter(today)) periodEnd = today; 
+
+        const isNonStandard = !((current.date() === 1 && periodEnd.date() === 15) || (current.date() === 16 && periodEnd.isSame(current.endOf('month'), 'day')));
 
         periods.push({
           label: `${current.format('MMMM YYYY')} (${current.date()} - ${periodEnd.date()})`,
           value: `${current.format('YYYY-MM-DD')}_${periodEnd.format('YYYY-MM-DD')}`,
-          start: current.format('YYYY-MM-DD'),
-          end: periodEnd.format('YYYY-MM-DD'),
-          isNonStandard: isNonStandard,
+          start: current.format('YYYY-MM-DD'), end: periodEnd.format('YYYY-MM-DD'), isNonStandard,
         });
-
         current = periodEnd.add(1, 'day');
       }
       setPayPeriods(periods.reverse());
     };
 
-    const fetchStartDate = async () => {
-      const { data, error } = await supabase.from('settings').select('agreement_start_date').eq('user_id', user.id).single();
-      if (error || !data.agreement_start_date) {
-        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
+    if (settings) {
+      if (settings.agreement_start_date) {
+        generatePayPeriods(settings.agreement_start_date);
       } else {
-        generatePayPeriods(data.agreement_start_date);
+        messageApi.warning('Please set your Agreement Start Date in Settings to generate reports.');
       }
-    };
-    fetchStartDate();
-  }, [user.id, messageApi]);
+    }
+  }, [settings, messageApi]);
 
   const handleGenerateReport = async () => {
     if (!selectedPeriod) { messageApi.error('Please select a pay period.'); return; }
@@ -87,16 +73,25 @@ const SalaryReportPage = ({ user }) => {
     setReportData([]);
     try {
       const period = payPeriods.find(p => p.value === selectedPeriod);
-      const { data: entries, error: entriesError } = await supabase.from('daily_entries').select('id').eq('user_id', user.id).gte('entry_date', period.start).lte('entry_date', period.end);
-      if (entriesError) throw entriesError;
-      if (entries.length === 0) { messageApi.info('No entries found for this period.'); setLoading(false); return; }
       
-      const entryIds = entries.map(e => e.id);
-      const { data: earnings, error: earningsError } = await supabase.from('daily_earnings').select('worker_name, earning').eq('user_id', user.id).in('entry_id', entryIds);
-      if (earningsError) throw earningsError;
+      const entries = await db.daily_entries
+        .where('[user_id+entry_date]')
+        .between([user.id, period.start], [user.id, period.end])
+        .toArray();
 
-      const { data: agreement, error: agreementError } = await supabase.from('agreements').select('monthly_allowance, allowance_calculation_type').eq('user_id', user.id).eq('agreement_name', 'Current Agreement').single();
-      if (agreementError) throw new Error('Could not fetch allowance rate.');
+      if (entries.length === 0) {
+        messageApi.info('No entries found for this period.');
+        setLoading(false);
+        return;
+      }
+      
+      const entryLocalIds = entries.map(e => e.local_id);
+      const earnings = await db.daily_earnings.where('entry_local_id').anyOf(entryLocalIds).toArray();
+      const agreement = await db.agreements.where({ user_id: user.id, agreement_name: 'Current Agreement' }).first();
+
+      if (!agreement) {
+        throw new Error('Could not find agreement data locally. Please go online to sync.');
+      }
       
       let allowanceForPeriod = 0;
       if (period.isNonStandard && agreement.allowance_calculation_type === 'Pro-Rata') {
