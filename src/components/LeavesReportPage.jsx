@@ -1,10 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Layout, Typography, Select, Button, Card, Table, message, Spin } from 'antd';
+import { Layout, Typography, Select, Button, Card, Table, message, Spin, Row, Col } from 'antd';
 import dayjs from 'dayjs';
 
 const { Content } = Layout;
 const { Title } = Typography;
+
+// --- Consistent Styles ---
+const pageStyles = {
+  padding: '12px',
+};
+
+const contentStyles = {
+  maxWidth: '1000px',
+  margin: '0 auto',
+  width: '100%',
+};
+
+const cardStyles = {
+  borderRadius: '8px',
+};
 
 const LeavesReportPage = ({ user }) => {
   const [fiscalYears, setFiscalYears] = useState([]);
@@ -13,7 +28,7 @@ const LeavesReportPage = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Yeh function agreement start date se fiscal years generate karega
+  // Yeh function agreement start date se fiscal years generate karega (LOGIC MEIN KOI TABDEELI NAHI)
   useEffect(() => {
     const generateFiscalYears = (startDateStr) => {
       const startDate = dayjs(startDateStr);
@@ -45,7 +60,7 @@ const LeavesReportPage = ({ user }) => {
     fetchStartDate();
   }, [user.id, messageApi]);
 
-  // "Generate Report" button par click hone par
+  // "Generate Report" button par click hone par (LOGIC MEIN KOI TABDEELI NAHI)
   const handleGenerateReport = async () => {
     if (!selectedYear) {
       messageApi.error('Please select a fiscal year.');
@@ -56,50 +71,22 @@ const LeavesReportPage = ({ user }) => {
 
     try {
       const year = fiscalYears.find(y => y.value === selectedYear);
-
-      // Step 1: Agreement se leaves ki details hasil karein
       const { data: agreement, error: agreementError } = await supabase.from('agreements').select('without_paid_leaves, paid_leaves').eq('user_id', user.id).eq('agreement_name', 'Current Agreement').single();
       if (agreementError) throw new Error('Could not fetch agreement details.');
       const withoutPaidLimit = agreement.without_paid_leaves || 0;
       const paidLimit = agreement.paid_leaves || 0;
-
-      // Step 2: Tamam ghair-hazriyan (absences) hasil karein
-      const { data: absences, error: absencesError } = await supabase
-        .from('daily_earnings')
-        .select('worker_name')
-        .eq('user_id', user.id)
-        .eq('attendance_status', 'Absent')
-        .gte('created_at', year.start)
-        .lte('created_at', year.end);
+      const { data: absences, error: absencesError } = await supabase.from('daily_earnings').select('worker_name').eq('user_id', user.id).eq('attendance_status', 'Absent').gte('created_at', year.start).lte('created_at', year.end);
       if (absencesError) throw absencesError;
-      
-      // Step 3: Har worker ke liye hisab lagayein
       const summary = {};
-      // Pehle tamam workers ko list mein shamil karein
       const { data: allWorkers } = await supabase.from('workers').select('worker_name').eq('user_id', user.id);
-      allWorkers.forEach(w => {
-        summary[w.worker_name] = { totalAbsences: 0 };
-      });
-
-      // Ab ghair-hazriyan ginein
-      absences.forEach(a => {
-        if (summary[a.worker_name]) {
-          summary[a.worker_name].totalAbsences += 1;
-        }
-      });
-
-      // Step 4: Nayi logic ke mutabiq leaves calculate karein
+      allWorkers.forEach(w => { summary[w.worker_name] = { totalAbsences: 0 }; });
+      absences.forEach(a => { if (summary[a.worker_name]) { summary[a.worker_name].totalAbsences += 1; } });
       const finalData = Object.keys(summary).map(workerName => {
         const totalAbsences = summary[workerName].totalAbsences;
-        
-        // Pehle Without Paid Leaves count hongi
         const unpaidLeavesTaken = Math.min(totalAbsences, withoutPaidLimit);
         const remainingAbsencesAfterUnpaid = totalAbsences - unpaidLeavesTaken;
-        
-        // Phir Paid Leaves count hongi
         const paidLeavesTaken = Math.min(remainingAbsencesAfterUnpaid, paidLimit);
         const remainingPaidLeaves = paidLimit - paidLeavesTaken;
-
         return {
           key: workerName,
           worker_name: workerName,
@@ -109,12 +96,8 @@ const LeavesReportPage = ({ user }) => {
           remaining_paid_leaves: remainingPaidLeaves,
         };
       });
-
       setReportData(finalData);
-      if (finalData.length === 0) {
-        messageApi.info('No workers found.');
-      }
-
+      if (finalData.length === 0) { messageApi.info('No workers found.'); }
     } catch (error) {
       messageApi.error(error.message);
     } finally {
@@ -131,20 +114,24 @@ const LeavesReportPage = ({ user }) => {
   ];
 
   return (
-    <Layout style={{ minHeight: '100vh', padding: '24px' }}>
+    <div style={pageStyles}>
       {contextHolder}
-      <Content style={{ maxWidth: '1000px', margin: '0 auto' }}>
-        <Title level={2}>Leaves Report</Title>
-        <Card>
-          <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
-            <Select
-              placeholder="Select Fiscal Year"
-              style={{ flexGrow: 1 }}
-              onChange={(value) => setSelectedYear(value)}
-              options={fiscalYears}
-            />
-            <Button type="primary" onClick={handleGenerateReport} loading={loading}>Generate Report</Button>
-          </div>
+      <div style={contentStyles}>
+        <Title level={2} style={{ marginBottom: '16px' }}>Leaves Report</Title>
+        <Card style={cardStyles}>
+          <Row gutter={[16, 16]} style={{ marginBottom: '24px' }}>
+            <Col xs={24} md={18}>
+              <Select
+                placeholder="Select Fiscal Year"
+                style={{ width: '100%' }}
+                onChange={(value) => setSelectedYear(value)}
+                options={fiscalYears}
+              />
+            </Col>
+            <Col xs={24} md={6}>
+              <Button type="primary" onClick={handleGenerateReport} loading={loading} block>Generate Report</Button>
+            </Col>
+          </Row>
           
           <Spin spinning={loading}>
             <Table
@@ -155,8 +142,8 @@ const LeavesReportPage = ({ user }) => {
             />
           </Spin>
         </Card>
-      </Content>
-    </Layout>
+      </div>
+    </div>
   );
 };
 

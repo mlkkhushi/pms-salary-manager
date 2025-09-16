@@ -1,0 +1,48 @@
+/* App.css */
+
+.logo-container {
+  padding: 8px;
+}
+
+/* Theme toggle switch ko Sider ke neeche fix karne ke liye */
+.theme-switch-container {
+  position: absolute;
+  bottom: 20px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+}
+
+/* Mobile Header ki styling */
+.app-header {
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  /* Background color theme se aayega */
+  background: var(--ant-color-bg-container);
+}
+
+/* Menu icon ka color theme se aayega */
+.menu-toggle-btn.ant-btn-text {
+  color: var(--ant-color-text);
+}
+
+/* Main content area ki styling */
+.app-content {
+  padding: 0;
+  margin: 0;
+  min-height: 280px;
+  /* Background color theme se aayega */
+  background: var(--ant-color-bg-base);
+}
+
+/* Mobile par menu khulne par piche overlay */
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  z-index: 999;
+}
