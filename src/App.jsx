@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { db } from './db'; // db ko yahan import karein
+import { db } from './db';
 import { App as AntApp, Layout, Menu, ConfigProvider, theme, Button, Switch, Grid, Tag, Tooltip, Spin, message } from 'antd';
 import {
   EditOutlined, DollarCircleOutlined, SettingOutlined, CarryOutOutlined, GiftOutlined,
@@ -20,7 +20,6 @@ import { SyncProvider, useSync } from './contexts/SyncContext';
 const { Sider, Content, Header } = Layout;
 const { useBreakpoint } = Grid;
 
-// --- Styles wese hi rahenge ---
 const customDarkTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#1d1d1d', colorBgContainer: '#2b2b2b', colorText: 'rgba(255, 255, 255, 0.85)', colorTextSecondary: 'rgba(255, 255, 255, 0.65)', colorBorder: '#424242' }, algorithm: theme.darkAlgorithm };
 const customLightTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#f0f2f5', colorBgContainer: '#ffffff' }, algorithm: theme.defaultAlgorithm };
 const siderStyle = { background: '#1d1d1d', position: 'sticky', top: 0, height: '100vh' };
@@ -36,18 +35,19 @@ const SyncStatusIndicator = () => {
 const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
   const [currentPage, setCurrentPage] = useState('daily_entry');
   const [collapsed, setCollapsed] = useState(true);
-  const [initialSyncComplete, setInitialSyncComplete] = useState(false); // Nayi state
-  const { isOnline } = useSync();
+  const [initialSyncComplete, setInitialSyncComplete] = useState(false);
+  const { isOnline, lastSyncTime } = useSync(); // lastSyncTime ko yahan hasil karein
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
-  // --- SYNC LOGIC AB YAHAN HAI ---
-  const syncWithSupabase = useCallback(async () => {
+  const syncWithSupabase = useCallback(async (isInitialSync) => {
     if (!isOnline) {
-      message.info("You are offline. Showing local data only.");
+      if(isInitialSync) setInitialSyncComplete(true); // Agar offline hain to loading khatam karein
       return;
     }
-    message.info("Syncing initial data with server...");
+    if(isInitialSync) message.info("Syncing initial data with server...");
+    else message.info("Refreshing data from server...");
+
     try {
       const { data: settingsData } = await supabase.from('settings').select('*').eq('user_id', user.id);
       const { data: workersData } = await supabase.from('workers').select('*').eq('user_id', user.id);
@@ -74,18 +74,26 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
             }
         }
       });
-      message.success("Initial data sync complete.");
+      if(isInitialSync) message.success("Initial data sync complete.");
     } catch (error) {
-      message.error("Failed to sync initial data.");
+      message.error("Failed to sync data.");
     } finally {
-      setInitialSyncComplete(true); // Sync mukammal ho gaya
+      if(isInitialSync) setInitialSyncComplete(true);
     }
   }, [user.id, isOnline]);
 
   useEffect(() => {
-    // Yeh function sirf ek baar chalega jab user login karega
-    syncWithSupabase();
-  }, [syncWithSupabase]);
+    // Pehli baar data download karein
+    syncWithSupabase(true);
+  }, []); // Sirf ek baar chalega
+
+  useEffect(() => {
+    // Jab bhi upload mukammal ho, to data ko refresh karein
+    if (lastSyncTime) {
+      syncWithSupabase(false);
+    }
+  }, [lastSyncTime, syncWithSupabase]);
+
 
   useEffect(() => { if (!isMobile) setCollapsed(false); }, [isMobile]);
 
@@ -105,7 +113,6 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
 
   const renderPage = () => {
     if (!initialSyncComplete && isOnline) {
-      // Jab tak pehli sync mukammal na ho, loading dikhayein
       return <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}><Spin size="large" tip="Loading initial data..." /></div>;
     }
     switch (currentPage) {
