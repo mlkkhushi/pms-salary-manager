@@ -5,7 +5,7 @@ import { App as AntApp, Layout, Menu, ConfigProvider, theme, Button, Switch, Gri
 import {
   EditOutlined, DollarCircleOutlined, SettingOutlined, CarryOutOutlined, GiftOutlined,
   CalculatorOutlined, MenuOutlined, SunOutlined, MoonOutlined, CloudSyncOutlined,
-  CloudOutlined, SyncOutlined
+  CloudOutlined, SyncOutlined, UserOutlined
 } from '@ant-design/icons';
 import AuthPage from './components/AuthPage';
 import DailyEntryPage from './components/DailyEntryPage';
@@ -14,6 +14,7 @@ import SettingsPage from './components/SettingsPage';
 import LeavesReportPage from './components/LeavesReportPage';
 import AnnualBonusPage from './components/AnnualBonusPage';
 import ArrearsPage from './components/ArrearsPage';
+import ProfilePage from './components/ProfilePage';
 import './App.css';
 import { SyncProvider, useSync } from './contexts/SyncContext';
 
@@ -36,13 +37,13 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
   const [currentPage, setCurrentPage] = useState('daily_entry');
   const [collapsed, setCollapsed] = useState(true);
   const [initialSyncComplete, setInitialSyncComplete] = useState(false);
-  const { isOnline, lastSyncTime } = useSync(); // lastSyncTime ko yahan hasil karein
+  const { isOnline, lastSyncTime } = useSync();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
   const syncWithSupabase = useCallback(async (isInitialSync) => {
     if (!isOnline) {
-      if(isInitialSync) setInitialSyncComplete(true); // Agar offline hain to loading khatam karein
+      if(isInitialSync) setInitialSyncComplete(true);
       return;
     }
     if(isInitialSync) message.info("Syncing initial data with server...");
@@ -83,12 +84,10 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
   }, [user.id, isOnline]);
 
   useEffect(() => {
-    // Pehli baar data download karein
     syncWithSupabase(true);
-  }, []); // Sirf ek baar chalega
+  }, []);
 
   useEffect(() => {
-    // Jab bhi upload mukammal ho, to data ko refresh karein
     if (lastSyncTime) {
       syncWithSupabase(false);
     }
@@ -104,6 +103,7 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
     { key: 'annual_bonus', icon: <GiftOutlined />, label: 'Annual Bonus' },
     { key: 'arrears', icon: <CalculatorOutlined />, label: 'Arrears' },
     { key: 'settings', icon: <SettingOutlined />, label: 'Settings' },
+    { key: 'profile', icon: <UserOutlined />, label: 'Profile' },
   ];
 
   const handleMenuClick = (e) => {
@@ -122,6 +122,7 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
       case 'annual_bonus': return <AnnualBonusPage user={user} />;
       case 'arrears': return <ArrearsPage user={user} />;
       case 'settings': return <SettingsPage user={user} />;
+      case 'profile': return <ProfilePage user={user} />;
       default: return <DailyEntryPage user={user} />;
     }
   };
@@ -156,11 +157,30 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
 function App() {
   const [session, setSession] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [initializing, setInitializing] = useState(true); // Nayi state
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
+    // onAuthStateChange foran session ki halat batata hai
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setInitializing(false); // Jaise hi pehli dafa check ho, initializing band kar dein
+    });
+
     return () => subscription.unsubscribe();
   }, []);
+
+  // Jab tak session check ho raha hai, loading spinner dikhayein
+  if (initializing) {
+    const themeStyles = isDarkMode 
+      ? { background: '#1d1d1d', color: 'rgba(255, 255, 255, 0.85)' } 
+      : { background: '#f0f2f5', color: 'rgba(0, 0, 0, 0.88)' };
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', ...themeStyles }}>
+        <Spin size="large" tip="Initializing..." />
+      </div>
+    );
+  }
+
   return (
     <ConfigProvider theme={isDarkMode ? customDarkTheme : customLightTheme}>
       <AntApp>
