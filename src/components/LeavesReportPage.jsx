@@ -18,7 +18,6 @@ const LeavesReportPage = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Settings ko local database se hasil karein
   const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
 
   useEffect(() => {
@@ -60,16 +59,25 @@ const LeavesReportPage = ({ user }) => {
     setReportData([]);
 
     try {
+      // --- 100% OFFLINE LOGIC START ---
+      const profile = await db.profiles.get(user.id);
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+
+      if (allWorkers.length === 0) {
+        messageApi.info('No workers found. Please add workers in Settings.');
+        setLoading(false);
+        return;
+      }
+      // --- 100% OFFLINE LOGIC END ---
+
       const year = fiscalYears.find(y => y.value === selectedYear);
       
-      // Tamam data local Dexie DB se fetch karein
       const agreement = await db.agreements.where({ user_id: user.id, agreement_name: 'Current Agreement' }).first();
       if (!agreement) throw new Error('Could not find agreement data locally. Please go online to sync.');
 
       const withoutPaidLimit = agreement.without_paid_leaves || 0;
       const paidLimit = agreement.paid_leaves || 0;
 
-      // Entries aur unki earnings ko local DB se hasil karein
       const entriesInYear = await db.daily_entries
         .where('[user_id+entry_date]')
         .between([user.id, year.start], [user.id, year.end])
@@ -82,8 +90,6 @@ const LeavesReportPage = ({ user }) => {
         .toArray();
 
       const summary = {};
-      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
-      
       allWorkers.forEach(w => {
         summary[w.worker_name] = { totalAbsences: 0 };
       });
@@ -110,9 +116,29 @@ const LeavesReportPage = ({ user }) => {
         };
       });
       
-      setReportData(finalData);
-      if (finalData.length === 0) {
-        messageApi.info('No workers found.');
+      // --- NAYA OFFLINE FILTERING LOGIC START ---
+      const allowedWorkersList = profile?.allowed_workers;
+      let filteredReportData = [];
+
+      if (!allowedWorkersList || allowedWorkersList.length === 0) {
+        // Default Case: Sirf pehla worker dikhayein
+        const firstWorkerName = allWorkers[0]?.worker_name;
+        if (firstWorkerName) {
+            const workerData = finalData.find(d => d.worker_name === firstWorkerName);
+            if (workerData) filteredReportData.push(workerData);
+        }
+      } else {
+        // Permission Case: Sirf ijazat shuda workers dikhayein
+        allowedWorkersList.forEach(workerName => {
+            const workerData = finalData.find(d => d.worker_name === workerName);
+            if (workerData) filteredReportData.push(workerData);
+        });
+      }
+      // --- NAYA OFFLINE FILTERING LOGIC END ---
+
+      setReportData(filteredReportData);
+      if (filteredReportData.length === 0) {
+        messageApi.info('No data available for the workers you are permitted to see.');
       }
     } catch (error) {
       messageApi.error(error.message);

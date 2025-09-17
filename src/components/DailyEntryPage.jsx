@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-// supabase ko yahan se hata diya gaya hai kyunke ab iski zaroorat nahi
 import { useSync } from '../contexts/SyncContext';
 import { db } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -42,8 +41,6 @@ const DailyEntryPage = ({ user }) => {
     }).sort((a, b) => dayjs(b.date).diff(dayjs(a.date)));
   }, [user.id]);
 
-  // syncWithSupabase function aur uska useEffect yahan se hata diya gaya hai
-
   useEffect(() => {
     if (workers.length > 0) {
         const currentPresentWorkers = form.getFieldValue('present_workers');
@@ -85,7 +82,14 @@ const DailyEntryPage = ({ user }) => {
       }
       absentWorkers.forEach(worker => earningsData.push({ worker_name: worker, earning: agreement.layoff_rate, attendance_status: 'Absent' }));
 
-      const entryPayload = { user_id: user.id, entry_date: formattedDate, day_type: day_type, tonnage: day_type !== 'Rest Day' ? tonnage : null };
+      // --- YEH HAI ASAL TABDEELI ---
+      const entryPayload = { 
+        user_id: user.id, 
+        entry_date: formattedDate, 
+        day_type: day_type, 
+        tonnage: day_type !== 'Rest Day' ? tonnage : null,
+        wagons: day_type !== 'Rest Day' ? wagons || 0 : 0, // Wagons ko yahan save karein
+      };
       const earningsPayload = earningsData.map(e => ({ user_id: user.id, ...e }));
 
       await db.transaction('rw', db.daily_entries, db.daily_earnings, async () => {

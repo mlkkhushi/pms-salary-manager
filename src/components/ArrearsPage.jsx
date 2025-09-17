@@ -21,9 +21,12 @@ const ArrearsPage = ({ user }) => {
     setLoading(true);
     setReportData([]);
     try {
-      // Tamam data local Dexie DB se fetch karein
+      const profile = await db.profiles.get(user.id);
+      
       const settings = await db.settings.where('user_id').equals(user.id).first();
       if (!settings || !settings.agreement_start_date) throw new Error('Agreement Start Date not set. Please go online to sync.');
+
+      const isWagonSystemEnabled = settings?.is_wagon_system_enabled || false;
 
       const oldAgreement = await db.agreements.where('[user_id+agreement_name]').equals([user.id, 'Current Agreement']).first();
       if (!oldAgreement) throw new Error('Could not find Current Agreement locally.');
@@ -32,7 +35,11 @@ const ArrearsPage = ({ user }) => {
       if (!newAgreement) throw new Error('Could not find New Agreement locally.');
 
       const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
-      if (allWorkers.length === 0) throw new Error('Could not find workers list locally.');
+      if (allWorkers.length === 0) {
+        messageApi.info('No workers found. Please add workers in Settings.');
+        setLoading(false);
+        return;
+      }
 
       const allEntries = await db.daily_entries.where('user_id').equals(user.id).and(e => dayjs(e.entry_date).isAfter(dayjs(settings.agreement_start_date).subtract(1, 'day'))).toArray();
       const allEntryLocalIds = allEntries.map(e => e.local_id);
@@ -46,23 +53,53 @@ const ArrearsPage = ({ user }) => {
       const today = dayjs();
       while (current.isBefore(today)) {
         const entry = allEntries.find(e => dayjs(e.entry_date).isSame(current, 'day'));
-        if (entry && entry.day_type === 'Work Day') {
+        if (entry) {
             const presentWorkers = allEarningsData.filter(e => e.entry_local_id === entry.local_id && e.attendance_status === 'Present').map(e => e.worker_name);
             if (presentWorkers.length > 0) {
-              let oldTonnageEarning = (entry.tonnage * oldAgreement.ton_rate) / presentWorkers.length;
-              oldTonnageEarning = Math.max(oldTonnageEarning, oldAgreement.layoff_rate);
-              let newTonnageEarning = (entry.tonnage * newAgreement.ton_rate) / presentWorkers.length;
-              newTonnageEarning = Math.max(newTonnageEarning, newAgreement.layoff_rate);
-              const dailyDifference = newTonnageEarning - oldTonnageEarning;
-              if (dailyDifference > 0) {
-                presentWorkers.forEach(worker => { arrearsSummary[worker].salary_arrears += dailyDifference; });
+              let oldRateEarning = 0;
+              let newRateEarning = 0;
+
+              if (entry.day_type === 'Work Day') {
+                const oldTonnageEarning = (entry.tonnage * oldAgreement.ton_rate) / presentWorkers.length;
+                oldRateEarning = Math.max(oldTonnageEarning, oldAgreement.layoff_rate);
+                const newTonnageEarning = (entry.tonnage * newAgreement.ton_rate) / presentWorkers.length;
+                newRateEarning = Math.max(newTonnageEarning, newAgreement.layoff_rate);
+              } else if (entry.day_type === 'Special Overtime') {
+                let oldBaseEarning = (entry.tonnage * oldAgreement.ton_rate) / presentWorkers.length;
+                let oldCalculatedEarning = (oldBaseEarning * 2) + oldAgreement.layoff_rate;
+                oldRateEarning = Math.max(oldCalculatedEarning, oldAgreement.layoff_rate * 3);
+                let newBaseEarning = (entry.tonnage * newAgreement.ton_rate) / presentWorkers.length;
+                let newCalculatedEarning = (newBaseEarning * 2) + newAgreement.layoff_rate;
+                newRateEarning = Math.max(newCalculatedEarning, newAgreement.layoff_rate * 3);
+              } else if (entry.day_type === 'Rest Day') {
+                oldRateEarning = oldAgreement.rest_rate;
+                newRateEarning = newAgreement.rest_rate;
+              }
+
+              let oldWagonEarning = 0;
+              let newWagonEarning = 0;
+              if (isWagonSystemEnabled && entry.wagons > 0) {
+                oldWagonEarning = (entry.wagons * (oldAgreement.wagon_rate || 0)) / presentWorkers.length;
+                newWagonEarning = (entry.wagons * (newAgreement.wagon_rate || 0)) / presentWorkers.length;
+              }
+              
+              const rateDifference = newRateEarning - oldRateEarning;
+              const wagonDifference = newWagonEarning - oldWagonEarning;
+              const totalDailyDifference = rateDifference + wagonDifference;
+
+              if (totalDailyDifference > 0) {
+                presentWorkers.forEach(worker => { 
+                    if(arrearsSummary[worker]) {
+                        arrearsSummary[worker].salary_arrears += totalDailyDifference; 
+                    }
+                });
               }
             }
         }
         current = current.add(1, 'day');
       }
 
-      // Allowance Arrears Calculation
+      // Allowance Arrears Calculation (RESTORED)
       let allowanceCurrent = dayjs(settings.agreement_start_date);
       while (allowanceCurrent.isBefore(today)) {
         const endOfMonth = allowanceCurrent.endOf('month');
@@ -73,12 +110,16 @@ const ArrearsPage = ({ user }) => {
         let newAllowance = (newAgreement.allowance_calculation_type === 'Pro-Rata' && isNonStandard) ? ((newAgreement.monthly_allowance / 30) * (periodEnd.diff(allowanceCurrent, 'day') + 1)) : (newAgreement.monthly_allowance / 2);
         const allowanceDiff = newAllowance - oldAllowance;
         if (allowanceDiff > 0) {
-          allWorkers.forEach(w => { arrearsSummary[w.worker_name].allowance_arrears += allowanceDiff; });
+          allWorkers.forEach(w => { 
+              if(arrearsSummary[w.worker_name]) {
+                arrearsSummary[w.worker_name].allowance_arrears += allowanceDiff; 
+              }
+          });
         }
         allowanceCurrent = periodEnd.add(1, 'day');
       }
 
-      // Bonus Arrears Calculation (Yeh logic bohot paicheeda hai, isay ehtiyat se offline kiya gaya hai)
+      // Bonus Arrears Calculation (RESTORED)
       const fiscalYears = [];
       let yearStart = dayjs(settings.agreement_start_date);
       while(yearStart.add(1, 'year').isBefore(today)) {
@@ -90,6 +131,8 @@ const ArrearsPage = ({ user }) => {
         const agreementForOldBonus = year.start.isSame(dayjs(settings.agreement_start_date), 'day') ? oldAgreement : newAgreement;
           for (const worker of allWorkers) {
               const workerName = worker.worker_name;
+              if (!arrearsSummary[workerName]) continue;
+
               const entriesThisYear = allEntries.filter(e => dayjs(e.entry_date).isBetween(year.start, year.end, null, '[]'));
               const entryLocalIdsThisYear = entriesThisYear.map(e => e.local_id);
               const earningsThisYear = allEarningsData.filter(e => entryLocalIdsThisYear.includes(e.entry_local_id) && e.worker_name === workerName);
@@ -105,10 +148,8 @@ const ArrearsPage = ({ user }) => {
               const oldPaidLeavesBonus = oldRemainingPaid * (agreementForOldBonus.paid_leave_rate || 0);
               const oldBonusPackage = oldAvgSalary + oldAvgSalary + oldPaidLeavesBonus;
               
-              // New bonus calculation needs to be based on new rates applied to old work
-              const newAnnualWorkEarnings = 0; // Arrears are calculated on top, not by recalculating work
               const newAnnualAllowance = (newAgreement.monthly_allowance || 0) * 12;
-              const newTotalAnnual = oldAnnualWorkEarnings + newAnnualAllowance; // Use old work earnings with new allowance
+              const newTotalAnnual = oldAnnualWorkEarnings + newAnnualAllowance;
               const newAvgSalary = newTotalAnnual > 0 ? newTotalAnnual / 12 : 0;
               const newAbsences = oldAbsences;
               const newUnpaidTaken = Math.min(newAbsences, newAgreement.without_paid_leaves || 0);
@@ -132,7 +173,27 @@ const ArrearsPage = ({ user }) => {
         bonus_arrears: arrearsSummary[workerName].bonus_arrears,
         total_arrears: arrearsSummary[workerName].salary_arrears + arrearsSummary[workerName].allowance_arrears + arrearsSummary[workerName].bonus_arrears,
       }));
-      setReportData(finalData);
+      
+      const allowedWorkersList = profile?.allowed_workers;
+      let filteredReportData = [];
+
+      if (!allowedWorkersList || allowedWorkersList.length === 0) {
+        const firstWorkerName = allWorkers[0]?.worker_name;
+        if (firstWorkerName) {
+            const workerData = finalData.find(d => d.worker_name === firstWorkerName);
+            if (workerData) filteredReportData.push(workerData);
+        }
+      } else {
+        allowedWorkersList.forEach(workerName => {
+            const workerData = finalData.find(d => d.worker_name === workerName);
+            if (workerData) filteredReportData.push(workerData);
+        });
+      }
+
+      setReportData(filteredReportData);
+      if (filteredReportData.length === 0) {
+        messageApi.info('No data available for the workers you are permitted to see.');
+      }
     } catch (error) {
       messageApi.error(error.message);
     } finally {

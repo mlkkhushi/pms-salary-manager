@@ -10,8 +10,6 @@ export const useSync = () => useContext(SyncContext);
 export const SyncProvider = ({ children }) => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
-
-  // Naya state taake hum doosre components ko bata sakein ke sync mukammal ho gaya hai
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
   useEffect(() => {
@@ -40,14 +38,26 @@ export const SyncProvider = ({ children }) => {
       try {
         if (op.type === 'create_daily_entry') {
           const { entry, earnings } = op.data;
+          
+          // Pehle purani entry delete karein
           await supabase.from('daily_entries').delete().match({ user_id: entry.user_id, entry_date: entry.entry_date });
-          const { data: newEntry, error: entryError } = await supabase.from('daily_entries').insert({ user_id: entry.user_id, entry_date: entry.entry_date, day_type: entry.day_type, tonnage: entry.tonnage }).select('id').single();
+          
+          // --- YEH HAI ASAL AUR AAKHRI FIX ---
+          // Ab 'wagons' ki value bhi Supabase par bhejein
+          const { data: newEntry, error: entryError } = await supabase.from('daily_entries').insert({ 
+            user_id: entry.user_id, 
+            entry_date: entry.entry_date, 
+            day_type: entry.day_type, 
+            tonnage: entry.tonnage,
+            wagons: entry.wagons // Yahan 'wagons' ko shamil kar diya gaya hai
+          }).select('id').single();
+
           if (entryError) throw entryError;
+          
           const earningsToInsert = earnings.map(e => ({ ...e, entry_id: newEntry.id }));
           const { error: earningsError } = await supabase.from('daily_earnings').insert(earningsToInsert);
           if (earningsError) throw earningsError;
           
-          // Local entry ko 'synced' mark karein
           const entryToUpdate = await db.daily_entries.where({ user_id: entry.user_id, entry_date: entry.entry_date }).first();
           if (entryToUpdate) {
             await db.daily_entries.update(entryToUpdate.local_id, { synced: true });
@@ -63,7 +73,6 @@ export const SyncProvider = ({ children }) => {
     }
 
     setIsSyncing(false);
-    // Sync mukammal hone ka waqt record karein
     setLastSyncTime(new Date()); 
   }, [isOnline, isSyncing]);
 
@@ -74,7 +83,6 @@ export const SyncProvider = ({ children }) => {
     }
   }, [isOnline, syncData]);
 
-  // Ab hum 'lastSyncTime' ko bhi context se faraham karenge
   const value = { isOnline, isSyncing, triggerSync: syncData, lastSyncTime };
 
   return (

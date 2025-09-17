@@ -19,7 +19,6 @@ const AnnualBonusPage = ({ user }) => {
   const [agreementStartDate, setAgreementStartDate] = useState(null);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // Settings ko local database se hasil karein
   const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
 
   useEffect(() => {
@@ -60,19 +59,26 @@ const AnnualBonusPage = ({ user }) => {
     setLoading(true);
     setReportData([]);
     try {
+      // --- 100% OFFLINE LOGIC START ---
+      const profile = await db.profiles.get(user.id);
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+
+      if (allWorkers.length === 0) {
+        messageApi.info('No workers found. Please add workers in Settings.');
+        setLoading(false);
+        return;
+      }
+      // --- 100% OFFLINE LOGIC END ---
+
       const year = fiscalYears.find(y => y.value === selectedYear);
       const selectedYearStartDate = dayjs(year.start);
       const isFirstYear = selectedYearStartDate.isSame(agreementStartDate, 'day');
       const agreementNameToFetch = isFirstYear ? 'Current Agreement' : 'New Agreement';
       messageApi.info(`Calculating bonus using: ${agreementNameToFetch}`);
       
-      // Tamam data local Dexie DB se fetch karein
       const agreement = await db.agreements.where({ user_id: user.id, agreement_name: agreementNameToFetch }).first();
       if (!agreement) throw new Error(`Could not find '${agreementNameToFetch}' details locally. Please go online to sync.`);
       
-      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
-      if (allWorkers.length === 0) throw new Error('Could not find workers list locally.');
-
       const entriesInYear = await db.daily_entries.where('[user_id+entry_date]').between([user.id, year.start], [user.id, year.end]).toArray();
       const entryLocalIds = entriesInYear.map(e => e.local_id);
       const earnings = await db.daily_earnings.where('entry_local_id').anyOf(entryLocalIds).toArray();
@@ -102,7 +108,31 @@ const AnnualBonusPage = ({ user }) => {
           total_bonus_package: totalBonusPackage,
         };
       });
-      setReportData(finalData);
+
+      // --- NAYA OFFLINE FILTERING LOGIC START ---
+      const allowedWorkersList = profile?.allowed_workers;
+      let filteredReportData = [];
+
+      if (!allowedWorkersList || allowedWorkersList.length === 0) {
+        // Default Case: Sirf pehla worker dikhayein
+        const firstWorkerName = allWorkers[0]?.worker_name;
+        if (firstWorkerName) {
+            const workerData = finalData.find(d => d.worker_name === firstWorkerName);
+            if (workerData) filteredReportData.push(workerData);
+        }
+      } else {
+        // Permission Case: Sirf ijazat shuda workers dikhayein
+        allowedWorkersList.forEach(workerName => {
+            const workerData = finalData.find(d => d.worker_name === workerName);
+            if (workerData) filteredReportData.push(workerData);
+        });
+      }
+      // --- NAYA OFFLINE FILTERING LOGIC END ---
+
+      setReportData(filteredReportData);
+      if (filteredReportData.length === 0) {
+        messageApi.info('No data available for the workers you are permitted to see.');
+      }
     } catch (error) {
       messageApi.error(error.message);
     } finally {

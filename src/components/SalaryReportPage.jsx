@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../db'; // Supabase ke bajaye Dexie DB ko import karein
+import { db } from '../db'; // Dexie DB ko import karein
 import { useLiveQuery } from 'dexie-react-hooks'; // Live data ke liye hook
 import { Layout, Typography, Select, Button, Card, Table, message, Spin } from 'antd';
 import dayjs from 'dayjs';
@@ -41,11 +41,6 @@ const SalaryReportPage = ({ user }) => {
           else periodEnd = current.endOf('month');
         }
 
-        // --- BUG FIX ---
-        // Neeche di gayi line ghalti se maujooda period ko chota kar rahi thi.
-        // Isay hata diya gaya hai.
-        // if (periodEnd.isAfter(today)) periodEnd = today; 
-
         const isNonStandard = !((current.date() === 1 && periodEnd.date() === 15) || (current.date() === 16 && periodEnd.isSame(current.endOf('month'), 'day')));
 
         periods.push({
@@ -72,6 +67,18 @@ const SalaryReportPage = ({ user }) => {
     setLoading(true);
     setReportData([]);
     try {
+      // --- 100% OFFLINE LOGIC START ---
+      // 1. Local Dexie DB se profile aur workers fetch karein
+      const profile = await db.profiles.get(user.id);
+      const allWorkers = await db.workers.where('user_id').equals(user.id).toArray();
+
+      if (allWorkers.length === 0) {
+        messageApi.info('No workers found. Please add workers in Settings.');
+        setLoading(false);
+        return;
+      }
+      // --- 100% OFFLINE LOGIC END ---
+
       const period = payPeriods.find(p => p.value === selectedPeriod);
       
       const entries = await db.daily_entries
@@ -107,14 +114,39 @@ const SalaryReportPage = ({ user }) => {
         if (!summary[e.worker_name]) summary[e.worker_name] = 0;
         summary[e.worker_name] += e.earning;
       });
+      
+      // --- NAYA OFFLINE FILTERING LOGIC START ---
+      const allowedWorkersList = profile?.allowed_workers;
+      let filteredSummary = {};
 
-      const finalData = Object.keys(summary).map(workerName => ({
+      if (!allowedWorkersList || allowedWorkersList.length === 0) {
+        // Default Case: Agar koi permission set nahi, to sirf pehla worker dikhayein
+        const firstWorkerName = allWorkers[0]?.worker_name;
+        if (firstWorkerName && summary.hasOwnProperty(firstWorkerName)) {
+          filteredSummary[firstWorkerName] = summary[firstWorkerName];
+        }
+      } else {
+        // Permission Case: Sirf ijazat shuda workers dikhayein
+        allowedWorkersList.forEach(workerName => {
+          if (summary.hasOwnProperty(workerName)) {
+            filteredSummary[workerName] = summary[workerName];
+          }
+        });
+      }
+      // --- NAYA OFFLINE FILTERING LOGIC END ---
+
+      const finalData = Object.keys(filteredSummary).map(workerName => ({
         key: workerName,
         worker_name: workerName,
-        work_earning: summary[workerName],
+        work_earning: filteredSummary[workerName],
         allowance: allowanceForPeriod,
-        total_salary: summary[workerName] + allowanceForPeriod,
+        total_salary: filteredSummary[workerName] + allowanceForPeriod,
       }));
+
+      if (finalData.length === 0) {
+        messageApi.info('No data available for the workers you are permitted to see in this period.');
+      }
+
       setReportData(finalData);
 
     } catch (error) {
@@ -146,22 +178,7 @@ const SalaryReportPage = ({ user }) => {
               columns={columns}
               dataSource={reportData}
               pagination={false}
-              summary={pageData => {
-                let totalEarning = 0, totalAllowance = 0, totalSalary = 0;
-                pageData.forEach(({ work_earning, allowance, total_salary }) => {
-                  totalEarning += work_earning;
-                  totalAllowance += allowance;
-                  totalSalary += total_salary;
-                });
-                return (
-                  <Table.Summary.Row>
-                    <Table.Summary.Cell index={0}><strong>Total</strong></Table.Summary.Cell>
-                    <Table.Summary.Cell index={1}><strong>{totalEarning.toFixed(2)}</strong></Table.Summary.Cell>
-                    <Table.Summary.Cell index={2}><strong>{totalAllowance.toFixed(2)}</strong></Table.Summary.Cell>
-                    <Table.Summary.Cell index={3}><strong>{totalSalary.toFixed(2)}</strong></Table.Summary.Cell>
-                  </Table.Summary.Row>
-                );
-              }}
+              // Total row yahan se hata di gayi hai
             />
           </Spin>
         </Card>

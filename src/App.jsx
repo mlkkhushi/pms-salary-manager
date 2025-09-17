@@ -50,19 +50,26 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
     else message.info("Refreshing data from server...");
 
     try {
+      // --- NAYI TABDEELI: Profile data bhi fetch karein ---
+      const { data: profilesData } = await supabase.from('profiles').select('*').eq('id', user.id);
       const { data: settingsData } = await supabase.from('settings').select('*').eq('user_id', user.id);
       const { data: workersData } = await supabase.from('workers').select('*').eq('user_id', user.id);
       const { data: agreementsData } = await supabase.from('agreements').select('*').eq('user_id', user.id);
       const { data: entriesData } = await supabase.from('daily_entries').select('*').eq('user_id', user.id);
       const { data: earningsData } = await supabase.from('daily_earnings').select('*').eq('user_id', user.id);
 
-      await db.transaction('rw', db.settings, db.workers, db.agreements, db.daily_entries, db.daily_earnings, async () => {
+      // --- NAYI TABDEELI: Transaction mein db.profiles shamil karein ---
+      await db.transaction('rw', db.profiles, db.settings, db.workers, db.agreements, db.daily_entries, db.daily_earnings, async () => {
+        // --- NAYI TABDEELI: Local profile data ko clear karein ---
+        await db.profiles.where('id').equals(user.id).delete();
         await db.settings.where('user_id').equals(user.id).delete();
         await db.workers.where('user_id').equals(user.id).delete();
         await db.agreements.where('user_id').equals(user.id).delete();
         await db.daily_entries.where('user_id').equals(user.id).delete();
         await db.daily_earnings.where('user_id').equals(user.id).delete();
         
+        // --- NAYI TABDEELI: Naya profile data local DB mein daalein ---
+        await db.profiles.bulkAdd(profilesData || []);
         await db.settings.bulkAdd(settingsData || []);
         await db.workers.bulkAdd(workersData || []);
         await db.agreements.bulkAdd(agreementsData || []);
@@ -157,19 +164,17 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
 function App() {
   const [session, setSession] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [initializing, setInitializing] = useState(true); // Nayi state
+  const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
-    // onAuthStateChange foran session ki halat batata hai
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setInitializing(false); // Jaise hi pehli dafa check ho, initializing band kar dein
+      setInitializing(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Jab tak session check ho raha hai, loading spinner dikhayein
   if (initializing) {
     const themeStyles = isDarkMode 
       ? { background: '#1d1d1d', color: 'rgba(255, 255, 255, 0.85)' } 
