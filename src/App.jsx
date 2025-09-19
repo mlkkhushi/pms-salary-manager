@@ -1,3 +1,4 @@
+import { useTheme } from './ThemeContext';
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { db } from './db';
@@ -21,8 +22,8 @@ import { SyncProvider, useSync } from './contexts/SyncContext';
 const { Sider, Content, Header } = Layout;
 const { useBreakpoint } = Grid;
 
-const customDarkTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#1d1d1d', colorBgContainer: '#2b2b2b', colorText: 'rgba(255, 255, 255, 0.85)', colorTextSecondary: 'rgba(255, 255, 255, 0.65)', colorBorder: '#424242' }, algorithm: theme.darkAlgorithm };
-const customLightTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#f0f2f5', colorBgContainer: '#ffffff' }, algorithm: theme.defaultAlgorithm };
+const customDarkTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#1d1d1d', colorBgContainer: '#2b2b2b', colorText: 'rgba(255, 255, 255, 0.85)', colorTextSecondary: 'rgba(255, 255, 255, 0.65)', colorBorder: '#424242', fontSize: 16 }, algorithm: theme.darkAlgorithm };
+const customLightTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#f0f2f5', colorBgContainer: '#ffffff', fontSize: 15 }, algorithm: theme.defaultAlgorithm };
 const siderStyle = { background: '#1d1d1d', position: 'sticky', top: 0, height: '100vh' };
 const mobileSiderStyle = { background: '#1d1d1d', position: 'fixed', top: 0, left: 0, height: '100vh', zIndex: 1000, boxShadow: '0 0 10px rgba(0,0,0,0.5)' };
 
@@ -33,7 +34,7 @@ const SyncStatusIndicator = () => {
   return <Tooltip title="You are offline."><Tag icon={<CloudOutlined />} color="warning" style={{ fontSize: '14px', padding: '5px 10px' }}>Offline</Tag></Tooltip>;
 };
 
-const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
+const AppContent = ({ user, isDarkMode, toggleTheme }) => {
   const [currentPage, setCurrentPage] = useState('daily_entry');
   const [collapsed, setCollapsed] = useState(true);
   const [initialSyncComplete, setInitialSyncComplete] = useState(false);
@@ -138,7 +139,7 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
     <>
       <div className="logo-container"><h2 style={{ color: 'white', textAlign: 'center', margin: '16px 0' }}>Salary App</h2></div>
       <Menu theme="dark" mode="inline" defaultSelectedKeys={['daily_entry']} items={menuItems} onClick={handleMenuClick} style={{ background: 'transparent', borderRight: 0, fontSize: '16px' }} />
-      <div className="theme-switch-container"><Switch checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} checked={isDarkMode} onChange={setIsDarkMode} /></div>
+      <div className="theme-switch-container"><Switch checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} checked={isDarkMode} onChange={toggleTheme} /></div>
     </>
   );
 
@@ -163,7 +164,8 @@ const AppContent = ({ user, isDarkMode, setIsDarkMode }) => {
 
 function App() {
   const [session, setSession] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(true);
+const { themeMode, toggleTheme } = useTheme();
+const isDarkMode = themeMode === 'dark';
   const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
@@ -191,7 +193,7 @@ function App() {
       <AntApp>
         <SyncProvider>
           <div className="App">
-            {!session ? <AuthPage /> : <AppContent user={session.user} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} />}
+            {!session ? <AuthPage /> : <AppContent user={session.user} isDarkMode={isDarkMode} toggleTheme={toggleTheme} />}
           </div>
         </SyncProvider>
       </AntApp>

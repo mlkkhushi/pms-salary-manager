@@ -3,14 +3,12 @@ import { supabase } from '../supabaseClient';
 import { Layout, Typography, Form, InputNumber, Button, Card, Col, Row, message, DatePicker, Divider, Radio, Switch } from 'antd';
 import dayjs from 'dayjs';
 import WorkersSection from './WorkersSection';
-// PenaltySettings ka import hata diya gaya hai
 
 const { Content } = Layout;
 const { Title } = Typography;
 
-// Agreement Form ka component
+// Agreement Form ka component (Koi tabdeeli nahi)
 const AgreementForm = ({ title, user, messageApi, isWagonSystemEnabled }) => {
-  // ... (Is component mein koi tabdeeli nahi) ...
   const [form] = Form.useForm();
   useEffect(() => {
     const fetchAgreement = async () => {
@@ -42,7 +40,7 @@ const AgreementForm = ({ title, user, messageApi, isWagonSystemEnabled }) => {
   );
 };
 
-// Agreement Start Date ka component (YAHAN GHALTI THEEK KI GAYI HAI)
+// Agreement Start Date ka component (Koi tabdeeli nahi)
 const AgreementStartDate = ({ user, messageApi }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -58,14 +56,13 @@ const AgreementStartDate = ({ user, messageApi }) => {
   const onFinish = async (values) => {
     setLoading(true);
     try {
-      // .update() ke bajaye .upsert() istemal karein
       const { error } = await supabase
         .from('settings')
         .upsert({
-          user_id: user.id, // user_id bhi bhejna zaroori hai
+          user_id: user.id,
           agreement_start_date: values.agreement_start_date ? values.agreement_start_date.format('YYYY-MM-DD') : null
         }, {
-          onConflict: 'user_id' // Batayein ke user_id unique hai
+          onConflict: 'user_id'
         });
 
       if (error) throw error;
@@ -86,9 +83,8 @@ const AgreementStartDate = ({ user, messageApi }) => {
   );
 };
 
-// Wagon Settings ka component
+// Wagon Settings ka component (Koi tabdeeli nahi)
 const WagonSettings = ({ user, messageApi, onWagonSystemChange }) => {
-  // ... (Is component mein koi tabdeeli nahi) ...
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   useEffect(() => {
@@ -123,9 +119,99 @@ const WagonSettings = ({ user, messageApi, onWagonSystemChange }) => {
   );
 };
 
-// Main Settings Page
+// NAYA COMPONENT: Penalty Settings
+const PenaltySettings = ({ user, messageApi }) => {
+    const [form] = Form.useForm();
+    const [loading, setLoading] = useState(false);
+    const [isPenaltyEnabled, setIsPenaltyEnabled] = useState(true);
+
+    useEffect(() => {
+        const fetchSettings = async () => {
+            const { data } = await supabase
+                .from('settings')
+                .select('is_penalty_system_enabled, penalty_amount')
+                .eq('user_id', user.id)
+                .single();
+
+            if (data) {
+                form.setFieldsValue(data);
+                setIsPenaltyEnabled(data.is_penalty_system_enabled);
+            } else {
+                form.setFieldsValue({
+                    is_penalty_system_enabled: true,
+                    penalty_amount: 231
+                });
+                setIsPenaltyEnabled(true);
+            }
+        };
+        fetchSettings();
+    }, [form, user.id]);
+
+    const onFinish = async (values) => {
+        setLoading(true);
+        try {
+            const { error } = await supabase
+                .from('settings')
+                .upsert({
+                    user_id: user.id,
+                    is_penalty_system_enabled: values.is_penalty_system_enabled,
+                    penalty_amount: values.is_penalty_system_enabled ? values.penalty_amount : 0,
+                }, {
+                    onConflict: 'user_id'
+                });
+
+            if (error) throw error;
+            messageApi.success('Penalty settings saved successfully!');
+        } catch (error) {
+            messageApi.error('Failed to save penalty settings.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSwitchChange = (checked) => {
+        setIsPenaltyEnabled(checked);
+    };
+
+    return (
+        <Card title="Penalty System">
+            <Form
+                form={form}
+                onFinish={onFinish}
+                layout="vertical"
+                initialValues={{ is_penalty_system_enabled: true, penalty_amount: 231 }}
+            >
+                <Form.Item
+                    name="is_penalty_system_enabled"
+                    label="Enable Penalty System"
+                    valuePropName="checked"
+                >
+                    <Switch onChange={handleSwitchChange} />
+                </Form.Item>
+
+                {isPenaltyEnabled && (
+                    <Form.Item
+                        label="Penalty Amount (per Red Flag absence)"
+                        name="penalty_amount"
+                        rules={[{ required: true, message: 'Please input the penalty amount!' }]}
+                    >
+                        <InputNumber style={{ width: '100%' }} min={0} />
+                    </Form.Item>
+                )}
+
+                <Form.Item>
+                    <Button type="primary" htmlType="submit" loading={loading}>
+                        Save Penalty Settings
+                    </Button>
+                </Form.Item>
+            </Form>
+        </Card>
+    );
+};
+
+
+// Main Settings Page (Yahan naya component add kiya gaya hai)
 const SettingsPage = ({ user }) => {
-  // ... (Is component mein koi tabdeeli nahi) ...
   const [messageApi, contextHolder] = message.useMessage();
   const [isWagonSystemEnabled, setIsWagonSystemEnabled] = useState(false);
   return (
@@ -136,6 +222,9 @@ const SettingsPage = ({ user }) => {
         <AgreementStartDate user={user} messageApi={messageApi} />
         <Divider />
         <div style={{marginTop: '24px'}}><WagonSettings user={user} messageApi={messageApi} onWagonSystemChange={setIsWagonSystemEnabled} /></div>
+        <Divider />
+        {/* NAYA PENALTY SETTINGS CARD YAHAN ADD KIYA GAYA HAI */}
+        <div style={{marginTop: '24px'}}><PenaltySettings user={user} messageApi={messageApi} /></div>
         <Divider />
         <Title level={4} style={{marginTop: '24px'}}>Agreement Details</Title>
         <Row gutter={[24, 24]}><Col xs={24} lg={12}><AgreementForm title="Current Agreement" user={user} messageApi={messageApi} isWagonSystemEnabled={isWagonSystemEnabled} /></Col><Col xs={24} lg={12}><AgreementForm title="New Agreement" user={user} messageApi={messageApi} isWagonSystemEnabled={isWagonSystemEnabled} /></Col></Row>

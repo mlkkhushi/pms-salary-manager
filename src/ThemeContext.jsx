@@ -1,23 +1,39 @@
-// src/ThemeContext.jsx  <-- File ka naam .jsx hona chahiye
+// src/ThemeContext.jsx
 
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext } from 'react';
 
 // 1. Context create karein
 const ThemeContext = createContext();
 
 // 2. Provider component banayein
 export const ThemeProvider = ({ children }) => {
-  // Theme state, default 'light' hai. Hum localStorage se check karenge.
-  const [themeMode, setThemeMode] = useState(localStorage.getItem('themeMode') || 'light');
+  // Initial theme state set karne ka function
+  const getInitialTheme = () => {
+    // Pehle localStorage mein check karein ke user ne pehle se koi theme chuna hai ya nahi
+    const savedTheme = localStorage.getItem('themeMode');
+    if (savedTheme) {
+      return savedTheme;
+    }
 
-  // Jab bhi themeMode badle, usko localStorage mein save karein
-  useEffect(() => {
-    localStorage.setItem('themeMode', themeMode);
-  }, [themeMode]);
+    // Agar localStorage mein kuch nahi hai, to system ki setting check karein
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+
+    // Agar kuch na mile to default 'light' mode set karein
+    return 'light';
+  };
+
+  const [themeMode, setThemeMode] = useState(getInitialTheme);
 
   // Theme badalne wala function
   const toggleTheme = () => {
-    setThemeMode(prevMode => (prevMode === 'light' ? 'dark' : 'light'));
+    setThemeMode(prevMode => {
+      const newMode = prevMode === 'light' ? 'dark' : 'light';
+      // User ki pasand ko hamesha ke liye localStorage mein save karein
+      localStorage.setItem('themeMode', newMode);
+      return newMode;
+    });
   };
 
   // Value jo poori app ko provide ki jayegi

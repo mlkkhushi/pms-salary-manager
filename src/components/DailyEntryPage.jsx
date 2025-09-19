@@ -56,39 +56,127 @@ const DailyEntryPage = ({ user }) => {
     const formattedDate = entry_date.format('YYYY-MM-DD');
     
     try {
-      if (!agreement) {
-        throw new Error('Agreement rates not found locally. Please go online once to sync.');
+      if (!agreement || !settings) {
+        throw new Error('Agreement or settings not found locally. Please go online once to sync.');
       }
       
       const workerNames = workers.map(w => w.worker_name);
       const absentWorkers = workerNames.filter(w => !present_workers.includes(w));
       const earningsData = [];
+
+      // =================================================================
+      // --- PENALTY SYSTEM LOGIC START ---
+      // =================================================================
+      let redFlaggedAbsentWorkers = [];
+      let penaltyPerPresentWorker = 0;
+
+      // Penalty logic sirf tab chalegi jab system enabled ho aur hazir aur ghair-hazir, dono tarah ke workers hon.
+      if (settings.is_penalty_system_enabled && absentWorkers.length > 0 && present_workers.length > 0) {
+        
+        // Step 1: Maujooda agreement saal ki shuruaat ki tareekh maloom karein
+        const agreementStartDate = dayjs(settings.agreement_start_date);
+        const entryDate = dayjs(formattedDate);
+        let currentAgreementYearStart = agreementStartDate.year(entryDate.year());
+        if (entryDate.isBefore(currentAgreementYearStart)) {
+            currentAgreementYearStart = currentAgreementYearStart.subtract(1, 'year');
+        }
+
+        // Step 2: Agreement se chuttiyon ki hadd (limit) hasil karein
+        const totalAllowedLeaves = (agreement.paid_leaves || 0) + (agreement.without_paid_leaves || 0);
+
+        // Step 3: Maujooda agreement saal mein, aaj se pehle ki tamam entries ke IDs hasil karein
+        const relevantEntries = await db.daily_entries
+            .where('[user_id+entry_date]')
+            .between(
+                [user.id, currentAgreementYearStart.format('YYYY-MM-DD')], 
+                [user.id, entryDate.subtract(1, 'day').format('YYYY-MM-DD')], 
+                true, 
+                true
+            )
+            .toArray();
+        
+        const relevantEntryIds = relevantEntries.map(e => e.local_id);
+
+        // Step 4: Un entry IDs ki bunyad par ghair-hazir workers ki tamam chuttiyan nikalein
+        if (relevantEntryIds.length > 0) {
+            const leaveRecords = await db.daily_earnings
+                .where('entry_local_id').anyOf(relevantEntryIds)
+                .and(record => 
+                    absentWorkers.includes(record.worker_name) &&
+                    (record.attendance_status === 'Absent' || record.attendance_status === 'Paid Leave')
+                )
+                .toArray();
+
+            // Step 5: Har ghair-hazir worker ki chuttiyan ginein aur "Red Flag" walon ki shanakht karein
+            const leaveCounts = absentWorkers.reduce((acc, workerName) => ({ ...acc, [workerName]: 0 }), {});
+            
+            leaveRecords.forEach(record => {
+                if (leaveCounts[record.worker_name] !== undefined) {
+                    leaveCounts[record.worker_name]++;
+                }
+            });
+            
+            absentWorkers.forEach(workerName => {
+                if (leaveCounts[workerName] >= totalAllowedLeaves) {
+                    redFlaggedAbsentWorkers.push(workerName);
+                }
+            });
+        }
+
+        // Step 6: Agar koi Red Flag worker hai to penalty ka hisab lagayein
+        if (redFlaggedAbsentWorkers.length > 0) {
+            const totalPenalty = redFlaggedAbsentWorkers.length * (settings.penalty_amount || 0);
+            penaltyPerPresentWorker = totalPenalty / present_workers.length;
+        }
+      }
+      // =================================================================
+      // --- PENALTY SYSTEM LOGIC END ---
+      // =================================================================
+
       let wagonEarningPerWorker = 0;
       if (isWagonSystemEnabled && wagons > 0 && present_workers.length > 0) {
         wagonEarningPerWorker = (wagons * (agreement.wagon_rate || 0)) / present_workers.length;
       }
+
       if (day_type === 'Work Day' || day_type === 'Special Overtime') {
         let tonnageEarning = (present_workers.length > 0) ? (tonnage * agreement.ton_rate) / present_workers.length : 0;
+        
         if (day_type === 'Special Overtime') {
           tonnageEarning = (tonnageEarning * 2) + agreement.layoff_rate;
           const guarantee = agreement.layoff_rate * 3;
           tonnageEarning = Math.max(tonnageEarning, guarantee);
         }
-        const finalTonnageEarning = Math.max(tonnageEarning, agreement.layoff_rate);
+
+        // Penalty ko layoff se pehle minus karein
+        const earningAfterPenalty = tonnageEarning - penaltyPerPresentWorker;
+        // Layoff ki guarantee dein
+        const finalTonnageEarning = Math.max(earningAfterPenalty, agreement.layoff_rate);
+        
         const finalEarning = finalTonnageEarning + wagonEarningPerWorker;
         present_workers.forEach(worker => earningsData.push({ worker_name: worker, earning: finalEarning, attendance_status: 'Present' }));
-      } else {
-        present_workers.forEach(worker => earningsData.push({ worker_name: worker, earning: agreement.rest_rate, attendance_status: 'Present' }));
-      }
-      absentWorkers.forEach(worker => earningsData.push({ worker_name: worker, earning: agreement.layoff_rate, attendance_status: 'Absent' }));
 
-      // --- YEH HAI ASAL TABDEELI ---
+      } else { // Rest Day
+        // Penalty ko layoff se pehle minus karein
+        const earningAfterPenalty = agreement.rest_rate - penaltyPerPresentWorker;
+        // Layoff ki guarantee dein
+        const finalRestEarning = Math.max(earningAfterPenalty, agreement.layoff_rate);
+
+        present_workers.forEach(worker => earningsData.push({ worker_name: worker, earning: finalRestEarning, attendance_status: 'Present' }));
+      }
+
+      absentWorkers.forEach(worker => {
+        const isRedFlagged = redFlaggedAbsentWorkers.includes(worker);
+        // Agar worker red-flagged hai to kamayi 0, warna layoff rate milega
+        const earning = isRedFlagged ? 0 : agreement.layoff_rate;
+        earningsData.push({ worker_name: worker, earning: earning, attendance_status: 'Absent' });
+      });
+
       const entryPayload = { 
         user_id: user.id, 
         entry_date: formattedDate, 
         day_type: day_type, 
         tonnage: day_type !== 'Rest Day' ? tonnage : null,
-        wagons: day_type !== 'Rest Day' ? wagons || 0 : 0, // Wagons ko yahan save karein
+        wagons: day_type !== 'Rest Day' ? wagons || 0 : 0,
       };
       const earningsPayload = earningsData.map(e => ({ user_id: user.id, ...e }));
 
