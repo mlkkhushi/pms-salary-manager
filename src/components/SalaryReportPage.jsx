@@ -4,6 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks'; // Live data ke liye hook
 import { Layout, Typography, Select, Button, Card, Table, message, Spin, Row, Col } from 'antd';
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween'; // Date range ke liye plugin
+import DownloadToPdfButton from '../components/DownloadToPdfButton'; // <-- YAHAN IMPORT KIYA GAYA HAI
+
 dayjs.extend(isBetween);
 
 const { Content } = Layout;
@@ -218,9 +220,9 @@ const SalaryReportPage = ({ user }) => {
         ...processedDetails.sort((a, b) => new Date(a.date) - new Date(b.date)),
         { key: 'allowance', date: 'Allowance for Period', payment: allowanceForPeriod },
         {
-          key: 'grand_total', date: <strong>Grand Total</strong>,
-          tonnage: <strong>{grandTotalTonnage}</strong>, wagons: <strong>{grandTotalWagons}</strong>,
-          payment: <strong>{(grandTotalPayment + allowanceForPeriod).toFixed(2)}</strong>,
+          key: 'grand_total', date: 'Grand Total',
+          tonnage: grandTotalTonnage, wagons: grandTotalWagons,
+          payment: (grandTotalPayment + allowanceForPeriod),
         },
       ];
       setSalaryDetails(finalDetailsData);
@@ -245,6 +247,23 @@ const SalaryReportPage = ({ user }) => {
     { title: 'Absent Workers', dataIndex: 'absent_workers', key: 'absent_workers', minWidth: 150 },
     { title: 'Payment', dataIndex: 'payment', key: 'payment', width: 120, render: (val) => typeof val === 'number' ? val.toFixed(2) : val },
   ];
+
+  // <-- PDF KE LIYE DATA TAYYAR KARNA -->
+  const getPdfData = () => {
+    return salaryDetails.map(item => {
+      const newItem = { ...item };
+      if (typeof newItem.payment === 'number') {
+        newItem.payment = newItem.payment.toFixed(2);
+      }
+      return newItem;
+    });
+  }
+
+  const getPdfTitle = () => {
+    const period = payPeriods.find(p => p.value === selectedPeriod);
+    if (!period || !selectedWorker) return 'Salary Details';
+    return `Salary Details for ${selectedWorker} (${period.label})`;
+  };
 
   return (
     <Layout style={{ minHeight: '100vh', padding: '16px' }}>
@@ -291,12 +310,28 @@ const SalaryReportPage = ({ user }) => {
           </Spin>
           {salaryDetails.length > 0 && (
             <div style={{ marginTop: '32px' }}>
-              <Title level={4}>Salary Details (Day-wise Breakdown)</Title>
+              {/* <-- YAHAN TITLE AUR BUTTON ADD KIYE GAYE HAIN --> */}
+              <Row justify="space-between" align="middle">
+                <Col>
+                  <Title level={4}>Salary Details (Day-wise Breakdown)</Title>
+                </Col>
+                <Col>
+                  <DownloadToPdfButton
+  data={getPdfData()}
+  columns={detailsColumns}
+  fileName={`Salary_Details_${selectedWorker}_${dayjs().format('YYYY-MM-DD')}`}
+  title="Salary Details (Day-wise Breakdown)"
+  workerName={selectedWorker}
+  periodLabel={payPeriods.find(p => p.value === selectedPeriod)?.label}
+/>
+                </Col>
+              </Row>
               <Table
                 columns={detailsColumns} dataSource={salaryDetails}
                 rowKey="key"
                 pagination={false}
                 bordered scroll={{ x: 'max-content' }}
+                style={{ marginTop: '16px' }} // <-- Thora sa margin add kiya hai
               />
             </div>
           )}
