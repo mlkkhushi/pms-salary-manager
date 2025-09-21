@@ -19,9 +19,9 @@ import ProfilePage from './components/ProfilePage';
 import './App.css';
 import { SyncProvider, useSync } from './contexts/SyncContext';
 
+// Baqi tamam code waisa hi rahega...
 const { Sider, Content, Header } = Layout;
 const { useBreakpoint } = Grid;
-
 const customDarkTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#1d1d1d', colorBgContainer: '#2b2b2b', colorText: 'rgba(255, 255, 255, 0.85)', colorTextSecondary: 'rgba(255, 255, 255, 0.65)', colorBorder: '#424242', fontSize: 16 }, algorithm: theme.darkAlgorithm };
 const customLightTheme = { token: { colorPrimary: '#1677ff', colorBgBase: '#f0f2f5', colorBgContainer: '#ffffff', fontSize: 15 }, algorithm: theme.defaultAlgorithm };
 const siderStyle = { background: '#1d1d1d', position: 'sticky', top: 0, height: '100vh' };
@@ -163,18 +163,29 @@ function App() {
   const isDarkMode = themeMode === 'dark';
   const [initializing, setInitializing] = useState(true);
 
-  // --- YEH HAI AHEM TABDEELI ---
   useEffect(() => {
-    // Foran session hasil karne ki koshish karein
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setInitializing(false); // Foran initializing khatam karein
-    });
+    const checkUser = async () => {
+      if (navigator.onLine) {
+        const { data: { session } } = await supabase.auth.getSession();
+        setSession(session);
+      } else {
+        const offlineUser = await db.offline_session.get('currentUser');
+        if (offlineUser) {
+          setSession({ user: offlineUser.user });
+        }
+      }
+      setInitializing(false);
+    };
 
-    // Aur saath hi, mustaqbil ki tabdeeliyon ko bhi sunein
+    checkUser();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // --- YEH HAI AHEM TABDEELI ---
+      // Agar app offline hai aur naya session null hai, to kuch na karein.
+      if (!navigator.onLine && !session) {
+        return;
+      }
       setSession(session);
-      // Yahan se initializing hatayein kyunke woh pehle hi ho chuka hai
     });
 
     return () => subscription.unsubscribe();
