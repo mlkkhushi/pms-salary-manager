@@ -84,7 +84,7 @@ const SalaryReportPage = ({ user }) => {
     setReportData([]);
     try {
       const period = payPeriods.find(p => p.value === selectedPeriod);
-      const entries = await db.daily_entries.where('[user_id+entry_date]').between([user.id, period.start], [user.id, period.end]).toArray();
+      const entries = await db.daily_entries.where('[user_id+entry_date]').between([user.id, period.start], [user.id, period.end + '\uffff']).toArray();
 
       if (entries.length === 0) {
         messageApi.info('No entries found for this period.');
