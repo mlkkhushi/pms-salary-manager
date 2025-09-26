@@ -104,7 +104,7 @@ const ArrearsPage = ({ user }) => {
       while (allowanceCurrent.isBefore(today)) {
         const endOfMonth = allowanceCurrent.endOf('month');
         let periodEnd = allowanceCurrent.date() <= 15 ? allowanceCurrent.date(15) : endOfMonth;
-        if (periodEnd.isAfter(today)) periodEnd = today;
+        // if (periodEnd.isAfter(today)) periodEnd = today;
         const isNonStandard = !((allowanceCurrent.date() === 1 && periodEnd.date() === 15) || (allowanceCurrent.date() === 16 && periodEnd.isSame(allowanceCurrent.endOf('month'), 'day')));
         let oldAllowance = (oldAgreement.allowance_calculation_type === 'Pro-Rata' && isNonStandard) ? ((oldAgreement.monthly_allowance / 30) * (periodEnd.diff(allowanceCurrent, 'day') + 1)) : (oldAgreement.monthly_allowance / 2);
         let newAllowance = (newAgreement.allowance_calculation_type === 'Pro-Rata' && isNonStandard) ? ((newAgreement.monthly_allowance / 30) * (periodEnd.diff(allowanceCurrent, 'day') + 1)) : (newAgreement.monthly_allowance / 2);
