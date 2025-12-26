@@ -11,7 +11,7 @@ dayjs.extend(isBetween);
 const { Content } = Layout;
 const { Title } = Typography;
 
-const SalaryReportPage = ({ user }) => {
+const SalaryReportPage = ({ user, onEditClick }) => {
   const [payPeriods, setPayPeriods] = useState([]);
   const [selectedPeriod, setSelectedPeriod] = useState(null);
   const [reportData, setReportData] = useState([]);
@@ -238,7 +238,26 @@ const SalaryReportPage = ({ user }) => {
   ];
   
   const detailsColumns = [
-    { title: 'Date', dataIndex: 'date', key: 'date', width: 120, fixed: 'left' },
+    { 
+  title: 'Date', 
+  dataIndex: 'date', 
+  key: 'date', 
+  width: 120, 
+  fixed: 'left',
+  render: (text, record) => {
+    // Agar yeh summary row hai (Allowance ya Grand Total), to sirf text dikhayen
+    if (record.key === 'allowance' || record.key === 'grand_total') {
+      return <strong>{text}</strong>;
+    }
+    
+    // Agar asli entry hai, to format karein aur clickable banayen
+    return (
+      <Button type="link" onClick={() => onEditClick(text)} style={{ padding: 0, fontWeight: 'bold' }}>
+        {dayjs(text).format('DD MMM YYYY')}
+      </Button>
+    );
+  }
+},
     { title: 'Tonnage', dataIndex: 'tonnage', key: 'tonnage', width: 100 },
     { title: 'Day Type', dataIndex: 'day_type', key: 'day_type', width: 120 },
     { title: 'Wagons', dataIndex: 'wagons', key: 'wagons', width: 100 },

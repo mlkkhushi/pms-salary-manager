@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useSync } from '../contexts/SyncContext';
 import { db } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Layout, Typography, Form, DatePicker, Radio, InputNumber, Checkbox, Button, Card, Divider, Row, Col, message, Table, Spin, Tag } from 'antd';
-import { SaveOutlined, TeamOutlined, ProfileOutlined, CloudUploadOutlined, CloudOutlined } from '@ant-design/icons';
+import { Layout, Typography, Form, DatePicker, Radio, InputNumber, Checkbox, Button, Card, Divider, Row, Col, message, Table, Spin, Tag, Select } from 'antd';
+import { SaveOutlined, TeamOutlined, ProfileOutlined, CloudUploadOutlined, CloudOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
+const { Option } = Select;
 const { Content } = Layout;
 const { Title } = Typography;
 
@@ -13,33 +14,104 @@ const pageStyles = { padding: '12px' };
 const contentStyles = { maxWidth: '900px', margin: '0 auto', width: '100%' };
 const cardStyles = { borderRadius: '8px' };
 
-const DailyEntryPage = ({ user }) => {
+const DailyEntryPage = ({ user, editDate, onEditComplete }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [payPeriods, setPayPeriods] = useState([]);
+  const [selectedPeriod, setSelectedPeriod] = useState(null);
+  const formDate = Form.useWatch('entry_date', form);
   const [messageApi, contextHolder] = message.useMessage();
   const { isOnline, triggerSync } = useSync();
+  // 1. Pay Periods Generate karne ki logic (Same as Salary Report)
+
+  useEffect(() => {
+  if (editDate) {
+    const loadEntryForEdit = async () => {
+      const entry = await db.daily_entries.where({user_id: user.id, entry_date: editDate}).first();
+      if (entry) {
+        const earnings = await db.daily_earnings.where('entry_date').equals(editDate).toArray();
+        const presentWorkers = earnings.filter(e => e.attendance_status === 'Present').map(e => e.worker_name);
+        
+        form.setFieldsValue({
+          entry_date: dayjs(entry.entry_date),
+          day_type: entry.day_type,
+          tonnage: entry.tonnage,
+          wagons: entry.wagons || 0,
+          present_workers: presentWorkers,
+        });
+        onEditComplete(); // Edit mode khatam karein
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        messageApi.info(`Editing entry for ${editDate}`);
+      }
+    };
+    loadEntryForEdit();
+  }
+}, [editDate, user.id, form, onEditComplete]);
 
   const workers = useLiveQuery(() => db.workers.where('user_id').equals(user.id).toArray(), [user.id]) || [];
   const agreement = useLiveQuery(() => db.agreements.where('[user_id+agreement_name]').equals([user.id, 'Current Agreement']).first(), [user.id]);
   const settings = useLiveQuery(() => db.settings.where('user_id').equals(user.id).first(), [user.id]);
   const isWagonSystemEnabled = settings?.is_wagon_system_enabled || false;
 
+  useEffect(() => {
+  if (settings?.agreement_start_date) {
+    const startDate = dayjs(settings.agreement_start_date);
+    const periods = [];
+    let current = startDate;
+    const today = dayjs().add(1, 'month'); // Agle maheenay tak ke periods
+
+    while (current.isBefore(today)) {
+      let periodEnd = current.date() <= 15 ? current.date(15) : current.endOf('month');
+      periods.push({
+        label: `${current.format('MMM YYYY')} (${current.date()}-${periodEnd.date()})`,
+        value: `${current.format('YYYY-MM-DD')}_${periodEnd.format('YYYY-MM-DD')}`,
+        start: current.format('YYYY-MM-DD'),
+        end: periodEnd.format('YYYY-MM-DD'),
+      });
+      current = periodEnd.add(1, 'day');
+    }
+    setPayPeriods(periods.reverse());
+  }
+}, [settings]);
+
+// 2. Form ki Date badalne par Table ka Period khud badal jaye
+useEffect(() => {
+  if (formDate && payPeriods.length > 0) {
+    const formattedFormDate = formDate.format('YYYY-MM-DD');
+    const matchingPeriod = payPeriods.find(p => 
+      formattedFormDate >= p.start && formattedFormDate <= p.end
+    );
+    if (matchingPeriod) {
+      setSelectedPeriod(matchingPeriod.value);
+    }
+  }
+}, [formDate, payPeriods]);
+
   const detailedEntries = useLiveQuery(async () => {
-    const today = dayjs();
-    const currentPayPeriodStart = today.date() <= 15 ? today.date(1) : today.date(16);
-    const entries = await db.daily_entries.where('user_id').equals(user.id).and(entry => dayjs(entry.entry_date).isAfter(currentPayPeriodStart.subtract(1, 'day'))).toArray();
-    const earnings = await db.daily_earnings.where('user_id').equals(user.id).toArray();
-    return entries.map(entry => {
-      const earningsForThisEntry = earnings.filter(e => e.entry_date === entry.entry_date);
-      const absentWorkers = earningsForThisEntry.filter(e => e.attendance_status === 'Absent').map(e => e.worker_name).join(', ');
-      const presentWorkerEarning = earningsForThisEntry.find(e => e.attendance_status === 'Present')?.earning;
-      const payPerWorker = presentWorkerEarning !== undefined ? presentWorkerEarning : 0;
-      return {
-        key: entry.local_id, date: entry.entry_date, tonnage: entry.day_type === 'Rest Day' ? 'Rest Day' : entry.tonnage,
-        absent: absentWorkers || 'None', pay_per_worker: payPerWorker.toFixed(2), synced: entry.synced,
-      };
-    }).sort((a, b) => dayjs(b.date).diff(dayjs(a.date)));
-  }, [user.id]);
+  if (!selectedPeriod) return [];
+  
+  const [startDate, endDate] = selectedPeriod.split('_');
+  const entries = await db.daily_entries
+    .where('[user_id+entry_date]')
+    .between([user.id, startDate], [user.id, endDate], true, true)
+    .toArray();
+
+  const earnings = await db.daily_earnings.where('user_id').equals(user.id).toArray();
+  
+  return entries.map(entry => {
+    const earningsForThisEntry = earnings.filter(e => e.entry_date === entry.entry_date);
+    const absentWorkers = earningsForThisEntry.filter(e => e.attendance_status === 'Absent').map(e => e.worker_name).join(', ');
+    const presentWorkerEarning = earningsForThisEntry.find(e => e.attendance_status === 'Present')?.earning;
+    return {
+      key: entry.local_id, 
+      date: entry.entry_date, 
+      tonnage: entry.day_type === 'Rest Day' ? 'Rest Day' : entry.tonnage,
+      absent: absentWorkers || 'None', 
+      pay_per_worker: (presentWorkerEarning || 0).toFixed(2), 
+      synced: entry.synced,
+    };
+  }).sort((a, b) => dayjs(b.date).diff(dayjs(a.date)));
+}, [user.id, selectedPeriod]); // selectedPeriod badalne par table refresh hoga
 
   useEffect(() => {
     if (workers.length > 0) {
@@ -211,8 +283,69 @@ const DailyEntryPage = ({ user }) => {
     }
   };
 
+  const handleEdit = async (record) => {
+  try {
+    // 1. Dexie se is entry ka mukammal data lein
+    const entry = await db.daily_entries.get(record.key);
+    
+    // 2. Is entry ke workers ki attendance (earnings) lein
+    // Hum ne abhi 'entry_date' wala column add kiya tha, wahi istemal karenge
+    const earnings = await db.daily_earnings.where('entry_date').equals(entry.entry_date).toArray();
+    
+    // 3. Sirf un workers ke naam nikalain jo 'Present' thay
+    const presentWorkers = earnings
+      .filter(e => e.attendance_status === 'Present')
+      .map(e => e.worker_name);
+
+    // 4. Form mein sara data bhar (fill) dein
+    form.setFieldsValue({
+      entry_date: dayjs(entry.entry_date),
+      day_type: entry.day_type,
+      tonnage: entry.tonnage,
+      wagons: entry.wagons || 0,
+      present_workers: presentWorkers,
+    });
+
+    // 5. Page ko upar scroll karein
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    messageApi.info(`Editing entry for ${entry.entry_date}. Change values and Save to update.`);
+  } catch (error) {
+    messageApi.error("Failed to load entry details: " + error.message);
+  }
+};
+
   const detailedColumns = [
-    { title: 'Date', dataIndex: 'date', key: 'date', fixed: 'left', width: 110 },
+    { 
+  title: 'Date', 
+  dataIndex: 'date', 
+  key: 'date', 
+  fixed: 'left', 
+  width: 100, // Width thori kam kar di
+  render: (text, record) => (
+    <Button 
+      type="link" 
+      onClick={() => handleEdit(record)} 
+      style={{ 
+        padding: 0, 
+        height: 'auto', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '6px',
+        textAlign: 'left'
+      }}
+    >
+      {/* Pencil Icon */}
+      <EditOutlined style={{ fontSize: '14px' }} />
+      
+      {/* Date in 2 Rows */}
+      <div style={{ lineHeight: '1.2', fontWeight: 'bold' }}>
+        <div style={{ fontSize: '13px' }}>{dayjs(text).format('DD MMM')}</div>
+        <div style={{ fontSize: '11px', opacity: 0.7 }}>{dayjs(text).format('YYYY')}</div>
+      </div>
+    </Button>
+  )
+},
     { title: 'Tonnage', dataIndex: 'tonnage', key: 'tonnage', width: 100 },
     { title: 'Absent', dataIndex: 'absent', key: 'absent' },
     { title: 'Pay/Worker (Rs)', dataIndex: 'pay_per_worker', key: 'pay_per_worker', width: 150 },
@@ -251,7 +384,20 @@ const DailyEntryPage = ({ user }) => {
           <Form.Item style={{ marginTop: '16px' }}><Button type="primary" htmlType="submit" loading={loading} block size="large" icon={<SaveOutlined />}>Save Entry</Button></Form.Item>
         </Form>
         <Divider />
-        <Card style={cardStyles} title={<><ProfileOutlined />&nbsp; Detailed Entries (Current Pay Period)</>}>
+        <Card 
+  style={cardStyles} 
+  title={<><ProfileOutlined />&nbsp; Detailed Entries</>}
+  extra={
+    <Select
+      value={selectedPeriod}
+      onChange={(val) => setSelectedPeriod(val)}
+      style={{ width: 200 }}
+      placeholder="Select Period"
+    >
+      {payPeriods.map(p => <Option key={p.value} value={p.value}>{p.label}</Option>)}
+    </Select>
+  }
+>
           <Spin spinning={!detailedEntries}><Table columns={detailedColumns} dataSource={detailedEntries} pagination={false} scroll={{ x: true }} /></Spin>
         </Card>
       </Content>

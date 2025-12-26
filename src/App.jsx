@@ -36,9 +36,11 @@ const SyncStatusIndicator = () => {
 
 const AppContent = ({ user, isDarkMode, toggleTheme }) => {
   const [currentPage, setCurrentPage] = useState('daily_entry');
+  const [editDate, setEditDate] = useState(null);
   const [collapsed, setCollapsed] = useState(true);
   const [initialSyncComplete, setInitialSyncComplete] = useState(false);
   const { isOnline, lastSyncTime } = useSync();
+  const { message: messageApi } = AntApp.useApp();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
@@ -47,8 +49,8 @@ const AppContent = ({ user, isDarkMode, toggleTheme }) => {
       if(isInitialSync) setInitialSyncComplete(true);
       return;
     }
-    if(isInitialSync) message.info("Syncing initial data with server...");
-    else message.info("Refreshing data from server...");
+    if(isInitialSync) messageApi.info("Syncing initial data with server...");
+    else messageApi.info("Refreshing data from server...");
 
     try {
       const { data: profilesData } = await supabase.from('profiles').select('*').eq('id', user.id);
@@ -79,9 +81,9 @@ const AppContent = ({ user, isDarkMode, toggleTheme }) => {
             }
         }
       });
-      if(isInitialSync) message.success("Initial data sync complete.");
+      if(isInitialSync) messageApi.success("Initial data sync complete.");
     } catch (error) {
-      message.error("Failed to sync data.");
+      messageApi.error("Failed to sync data.");
     } finally {
       if(isInitialSync) setInitialSyncComplete(true);
     }
@@ -116,11 +118,11 @@ const AppContent = ({ user, isDarkMode, toggleTheme }) => {
 
   const renderPage = () => {
     if (!initialSyncComplete && isOnline) {
-      return <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}><Spin size="large" tip="Loading initial data..." /></div>;
+      return <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}><Spin size="large" /></div>;
     }
     switch (currentPage) {
-      case 'daily_entry': return <DailyEntryPage user={user} />;
-      case 'salary_report': return <SalaryReportPage user={user} />;
+      case 'daily_entry': return <DailyEntryPage user={user} editDate={editDate} onEditComplete={() => setEditDate(null)} />;
+      case 'salary_report': return <SalaryReportPage user={user} onEditClick={(date) => { setEditDate(date); setCurrentPage('daily_entry'); }} />;
       case 'leaves_report': return <LeavesReportPage user={user} />;
       case 'annual_bonus': return <AnnualBonusPage user={user} />;
       case 'arrears': return <ArrearsPage user={user} />;
@@ -197,7 +199,7 @@ function App() {
       : { background: '#f0f2f5', color: 'rgba(0, 0, 0, 0.88)' };
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', ...themeStyles }}>
-        <Spin size="large" tip="Initializing..." />
+        <Spin size="large" />
       </div>
     );
   }
