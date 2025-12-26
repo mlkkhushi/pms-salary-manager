@@ -92,8 +92,8 @@ const SalaryReportPage = ({ user }) => {
         return;
       }
       
-      const entryLocalIds = entries.map(e => e.local_id);
-      const earnings = await db.daily_earnings.where('entry_local_id').anyOf(entryLocalIds).toArray();
+      const entryDates = entries.map(e => e.entry_date);
+      const earnings = await db.daily_earnings.where('entry_date').anyOf(entryDates).toArray();
       
       if (!agreement || !profile || !allWorkers || allWorkers.length === 0) {
         throw new Error('Could not find essential data locally. Please go online to sync.');
@@ -148,14 +148,12 @@ const SalaryReportPage = ({ user }) => {
         setSelectedWorker(null);
       } else {
         setReportData(finalData);
-        if (finalData.length === 1) {
-          const workerName = finalData[0].worker_name;
-          setSelectedWorker(workerName);
-          generateSalaryDetails(period, workerName, finalData, entries, earnings);
-        } else {
-          setSelectedWorker(null);
-          setSalaryDetails([]);
-        }
+        // Hamesha pehla worker khud-ba-khud select karein
+        const firstWorkerName = finalData[0].worker_name;
+        setSelectedWorker(firstWorkerName);
+        
+        // Foran salary details generate karein
+        generateSalaryDetails(period, firstWorkerName, finalData, entries, earnings);
       }
     } catch (error) {
       messageApi.error(error.message);
@@ -179,7 +177,7 @@ const SalaryReportPage = ({ user }) => {
       const visibleWorkersInReport = new Set(reportDataSource.map(r => String(r.worker_name).trim()));
 
       const processedDetails = entries.map(entry => {
-        const earningsForThisDay = earnings.filter(e => e.entry_local_id === entry.local_id);
+        const earningsForThisDay = earnings.filter(e => e.entry_date === entry.entry_date);
         const absentWorkerRecords = earningsForThisDay.filter(e => e.attendance_status === 'Absent');
         const absentWorkers = absentWorkerRecords.map(e => String(e.worker_name).trim());
         const workerEarningForDay = earningsForThisDay.find(e => String(e.worker_name).trim() === String(workerName).trim());

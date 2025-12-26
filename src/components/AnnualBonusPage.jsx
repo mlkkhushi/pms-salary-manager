@@ -80,8 +80,8 @@ const AnnualBonusPage = ({ user }) => {
       if (!agreement) throw new Error(`Could not find '${agreementNameToFetch}' details locally. Please go online to sync.`);
       
       const entriesInYear = await db.daily_entries.where('[user_id+entry_date]').between([user.id, year.start], [user.id, year.end]).toArray();
-      const entryLocalIds = entriesInYear.map(e => e.local_id);
-      const earnings = await db.daily_earnings.where('entry_local_id').anyOf(entryLocalIds).toArray();
+      const entryDates = entriesInYear.map(e => e.entry_date);
+const earnings = await db.daily_earnings.where('entry_date').anyOf(entryDates).toArray();
 
       const totalAnnualAllowance = (agreement.monthly_allowance || 0) * 12;
       

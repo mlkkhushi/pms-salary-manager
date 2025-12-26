@@ -30,7 +30,7 @@ const DailyEntryPage = ({ user }) => {
     const entries = await db.daily_entries.where('user_id').equals(user.id).and(entry => dayjs(entry.entry_date).isAfter(currentPayPeriodStart.subtract(1, 'day'))).toArray();
     const earnings = await db.daily_earnings.where('user_id').equals(user.id).toArray();
     return entries.map(entry => {
-      const earningsForThisEntry = earnings.filter(e => e.entry_local_id === entry.local_id);
+      const earningsForThisEntry = earnings.filter(e => e.entry_date === entry.entry_date);
       const absentWorkers = earningsForThisEntry.filter(e => e.attendance_status === 'Absent').map(e => e.worker_name).join(', ');
       const presentWorkerEarning = earningsForThisEntry.find(e => e.attendance_status === 'Present')?.earning;
       const payPerWorker = presentWorkerEarning !== undefined ? presentWorkerEarning : 0;
@@ -178,7 +178,7 @@ const DailyEntryPage = ({ user }) => {
         tonnage: day_type !== 'Rest Day' ? tonnage : null,
         wagons: day_type !== 'Rest Day' ? wagons || 0 : 0,
       };
-      const earningsPayload = earningsData.map(e => ({ user_id: user.id, ...e }));
+      const earningsPayload = earningsData.map(e => ({ user_id: user.id, entry_date: formattedDate, ...e }));
 
       await db.transaction('rw', db.daily_entries, db.daily_earnings, async () => {
           const existing = await db.daily_entries.where({user_id: user.id, entry_date: formattedDate}).first();
@@ -216,7 +216,7 @@ const DailyEntryPage = ({ user }) => {
     { title: 'Tonnage', dataIndex: 'tonnage', key: 'tonnage', width: 100 },
     { title: 'Absent', dataIndex: 'absent', key: 'absent' },
     { title: 'Pay/Worker (Rs)', dataIndex: 'pay_per_worker', key: 'pay_per_worker', width: 150 },
-    { title: 'Status', dataIndex: 'synced', key: 'synced', fixed: 'right', width: 90, render: (synced) => (
+    { title: 'Status', dataIndex: 'synced', key: 'synced', width: 90, render: (synced) => (
         synced ? <Tag icon={<CloudUploadOutlined />} color="success">Synced</Tag> : <Tag icon={<CloudOutlined />} color="warning">Local</Tag>
     )},
   ];

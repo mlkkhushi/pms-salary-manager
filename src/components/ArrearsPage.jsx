@@ -42,8 +42,8 @@ const ArrearsPage = ({ user }) => {
       }
 
       const allEntries = await db.daily_entries.where('user_id').equals(user.id).and(e => dayjs(e.entry_date).isAfter(dayjs(settings.agreement_start_date).subtract(1, 'day'))).toArray();
-      const allEntryLocalIds = allEntries.map(e => e.local_id);
-      const allEarningsData = await db.daily_earnings.where('entry_local_id').anyOf(allEntryLocalIds).toArray();
+      const allEntryDates = allEntries.map(e => e.entry_date);
+const allEarningsData = await db.daily_earnings.where('entry_date').anyOf(allEntryDates).toArray();
 
       const arrearsSummary = {};
       allWorkers.forEach(w => { arrearsSummary[w.worker_name] = { salary_arrears: 0, allowance_arrears: 0, bonus_arrears: 0 }; });
@@ -54,7 +54,7 @@ const ArrearsPage = ({ user }) => {
       while (current.isBefore(today)) {
         const entry = allEntries.find(e => dayjs(e.entry_date).isSame(current, 'day'));
         if (entry) {
-            const presentWorkers = allEarningsData.filter(e => e.entry_local_id === entry.local_id && e.attendance_status === 'Present').map(e => e.worker_name);
+            const presentWorkers = allEarningsData.filter(e => e.entry_date === entry.entry_date && e.attendance_status === 'Present').map(e => e.worker_name);
             if (presentWorkers.length > 0) {
               let oldRateEarning = 0;
               let newRateEarning = 0;

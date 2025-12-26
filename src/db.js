@@ -30,3 +30,7 @@ db.version(5).stores({
 db.version(6).stores({
   offline_session: '&id, user' // '&id' ka matlab hai ke 'id' unique primary key hai
 });
+
+db.version(7).stores({
+  daily_earnings: '++local_id, id, entry_local_id, user_id, worker_name, earning, attendance_status, entry_date'
+});
