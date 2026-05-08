@@ -53,12 +53,36 @@ const AppContent = ({ user, isDarkMode, toggleTheme }) => {
     else messageApi.info("Refreshing data from server...");
 
     try {
-      const { data: profilesData } = await supabase.from('profiles').select('*').eq('id', user.id);
-      const { data: settingsData } = await supabase.from('settings').select('*').eq('user_id', user.id);
-      const { data: workersData } = await supabase.from('workers').select('*').eq('user_id', user.id);
-      const { data: agreementsData } = await supabase.from('agreements').select('*').eq('user_id', user.id);
-      const { data: entriesData } = await supabase.from('daily_entries').select('*').eq('user_id', user.id);
-      const { data: earningsData } = await supabase.from('daily_earnings').select('*').eq('user_id', user.id);
+      // Pagination Helper Function to bypass 1000 rows limit
+      const fetchAllData = async (tableName, columnMatch = 'user_id') => {
+        let allData =[];
+        let from = 0;
+        const step = 1000;
+        let fetchMore = true;
+        while (fetchMore) {
+          const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq(columnMatch, user.id)
+            .range(from, from + step - 1);
+          if (error) throw error;
+          if (data && data.length > 0) {
+            allData = [...allData, ...data];
+            from += step;
+            if (data.length < step) fetchMore = false;
+          } else {
+            fetchMore = false;
+          }
+        }
+        return allData;
+      };
+
+      const profilesData = await fetchAllData('profiles', 'id');
+      const settingsData = await fetchAllData('settings');
+      const workersData = await fetchAllData('workers');
+      const agreementsData = await fetchAllData('agreements');
+      const entriesData = await fetchAllData('daily_entries');
+      const earningsData = await fetchAllData('daily_earnings');
 
       await db.transaction('rw', db.profiles, db.settings, db.workers, db.agreements, db.daily_entries, db.daily_earnings, async () => {
         await db.profiles.where('id').equals(user.id).delete();
